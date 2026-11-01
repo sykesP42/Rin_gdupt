@@ -224,12 +224,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                         preset = TodayCards.PRESET_VERSION
                     )
                 }
-                rebuild(snapshot, weekOverride = _schedule.value.overview?.week ?: 0)
-                if (snapshot.petWeatherEnabled) refreshPetWeather()
                 if (firstSettings) {
                     firstSettings = false
+                    // Show the last good week immediately, then try a fresh
+                    // read. Without this a dead session used to leave the
+                    // page on an empty "第 1 周" until a login succeeded.
+                    restoreScheduleFromCache(snapshot)
                     if (!snapshot.simpleMode && _jwxtConnected.value) refreshJwxt(0)
                 }
+                rebuild(snapshot, weekOverride = _schedule.value.overview?.week ?: 0)
+                if (snapshot.petWeatherEnabled) refreshPetWeather()
             }
         }
         viewModelScope.launch {
@@ -336,6 +340,28 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
+     * Last good week from disk. The schedule cache is written on every
+     * successful read; showing it stale beats showing an empty 第 1 周.
+     */
+    private fun restoreScheduleFromCache(snapshot: AppSettings) {
+        if (_schedule.value.overview != null) return
+        val cached = container.cache.read("schedule_week0", ApiScheduleOverview.serializer()) ?: return
+        val (at, overview) = cached
+        // Seed jwxtOverview too: rebuild() prefers the school timetable, so the
+        // restored week survives settings changes instead of being replaced by
+        // a hand-built empty week.
+        jwxtOverview = overview
+        _schedule.value = ScheduleUiState(
+            overview = overview,
+            loading = false,
+            currentWeek = overview.week,
+            termStart = snapshot.termStartDate,
+            fromCache = true,
+            cachedAt = at.toString()
+        )
+    }
+
+    /**
      * One place that turns a failed read into the same state change everywhere:
      * an expired session disconnects, anything else only warns.
      */
@@ -347,12 +373,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             container.jwxtSessions.clear()
             _jwxtConnected.value = false
             viewModelScope.launch { settingsRepo.setJwxtConnectedAt("") }
+            if (_schedule.value.overview == null) {
+                restoreScheduleFromCache(_settings.value ?: return)
+            }
             _schedule.value = _schedule.value.copy(
                 warning = "教务登录已过期，请到「我的 → 教务连接」重新登录。"
             )
         } else {
             _schedule.value = _schedule.value.copy(
-                warning = "教务暂时不可用，当前显示本机课表。"
+                warning = "教务暂时不可用，显示的是最近一次读取的课表。"
             )
         }
     }
@@ -772,9 +801,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             currentWeek = currentWeekNumber(snapshot, today),
             termStart = snapshot.termStartDate.ifBlank { defaultTermStart(today).toString() }
         )
-        if (overview.week == _schedule.value.currentWeek || overview.week == 0) {
-            container.cache.write("schedule_week0", ApiScheduleOverview.serializer(), overview)
-        }
+        // Never write the hand-built overview into schedule_week0: that key is
+        // the school timetable's last-good copy, and a stale local build used
+        // to overwrite it and blank the page after a session died.
     }
 
     fun openCourseDetail(event: ApiScheduleEvent, weekday: Int? = null) {

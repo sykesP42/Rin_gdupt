@@ -1,6 +1,7 @@
 package top.sykesp42.rin.jwxt
 
 import android.annotation.SuppressLint
+import android.webkit.JavascriptInterface
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -47,6 +48,22 @@ class JwxtLoginActivity : Activity() {
     private var verifying = false
     /** Direct JWXT failed once; the WebVPN portal took over. */
     private var fellBackToWebVpn = false
+    // Credentials as typed on the school page, kept only in memory until the
+    // session verifies; then they land in the Keystore-encrypted store for the
+    // next login's autofill.
+    @Volatile private var rememberedUser = ""
+    @Volatile private var rememberedPass = ""
+    private var autofilled = false
+    private var captured = false
+
+    /** Bridge for the page-side hook: pushes what the user types. */
+    private inner class RinCred {
+        @JavascriptInterface
+        fun onInput(user: String, pass: String) {
+            rememberedUser = user.orEmpty().trim()
+            rememberedPass = pass.orEmpty()
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,7 +83,7 @@ class JwxtLoginActivity : Activity() {
         // Compact hint strip: what this page does and does not touch.
         root.addView(
             TextView(this).apply {
-                text = "在学校页面登录后点「完成连接」。只存加密凭据，不存密码，只读课表。"
+                text = "在学校页面登录后自动连接。账号密码只保存在本机加密存储里，用于下次自动填充；只读课表。"
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setTextColor(COLOR_TEXT_SECONDARY)
                 setPadding(dp(16), dp(8), dp(16), dp(8))
@@ -81,9 +98,13 @@ class JwxtLoginActivity : Activity() {
             cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = USER_AGENT
         }
+        webView.addJavascriptInterface(RinCred(), "RinCred")
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 refreshConnectState(url)
+                injectCredentialHook()
+                maybeAutofill()
+                maybeCapture(url)
             }
 
             override fun onReceivedError(
@@ -203,6 +224,122 @@ class JwxtLoginActivity : Activity() {
         }
     }
 
+    /**
+     * Fill the school login form from the Keystore-encrypted pair, so the
+     * password never passes through adb, logs or the clipboard. The page's own
+     * submit handler still encrypts it; the user still solves any slider.
+     */
+    private fun maybeAutofill() {
+        if (autofilled) return
+        attemptAutofill(0)
+    }
+
+    /** The form can be rendered after onPageFinished; retry a few times. */
+    private fun attemptAutofill(attempt: Int) {
+        if (autofilled || attempt > 5 || isFinishing) return
+        val credential = runCatching {
+            top.sykesp42.rin.data.AppContainer.get(this).jwxtCredentialStore.load()
+        }.getOrNull()
+        if (credential == null || credential.name.isBlank() || credential.value.isBlank()) return
+        val user = org.json.JSONObject.quote(credential.name)
+        val pass = org.json.JSONObject.quote(credential.value)
+        val js = """
+            (function(){
+              var u=${'$'}user, p=${'$'}pass;
+              var docs=[];
+              try{ docs.push(document); }catch(e){}
+              try{
+                for (var fi=0; fi<window.frames.length; fi++){
+                  try{ docs.push(window.frames[fi].document); }catch(e){}
+                }
+              }catch(e){}
+              function fillOne(doc, sels, v){
+                for (var i=0;i<sels.length;i++){
+                  var el=null;
+                  try{ el=doc.querySelector(sels[i]); }catch(e){}
+                  if(!el) continue;
+                  if(!el.value){
+                    try{
+                      el.focus(); el.value=v;
+                      el.dispatchEvent(new Event('input',{bubbles:true}));
+                      el.dispatchEvent(new Event('change',{bubbles:true}));
+                      el.blur();
+                    }catch(e){}
+                  }
+                  return true;
+                }
+                return false;
+              }
+              var userSels=['#username','input[name=username]','input[name=account]',
+                            'input[name=xh]','input[placeholder*=学号]','input[type=text]'];
+              var passSels=['#password','input[name=password]','input[name=pwd]',
+                            'input[placeholder*=密码]','input[type=password]'];
+              var a=false, b=false;
+              for(var d=0; d<docs.length; d++){
+                a = fillOne(docs[d], userSels, u) || a;
+                b = fillOne(docs[d], passSels, p) || b;
+              }
+              return a&&b;
+            })()
+        """.trimIndent()
+        webView.evaluateJavascript(js) { result ->
+            if (result == "true") {
+                autofilled = true
+                Toast.makeText(
+                    this@JwxtLoginActivity,
+                    "已填入本机保存的账号密码；完成滑块后登录",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                webView.postDelayed({ attemptAutofill(attempt + 1) }, 1_200L + attempt * 800L)
+            }
+        }
+    }
+
+    /** Injected on every page load: records typed credentials as the user TYPES. */
+    private fun injectCredentialHook() {
+        webView.evaluateJavascript(CRED_HOOK_JS, null)
+    }
+
+    /** After any page load, opportunistically capture when a session exists. */
+    private fun maybeCapture(pageUrl: String) {
+        if (pageUrl.contains("login")) return
+        if (captured) return
+        val raw = CookieManager.getInstance().getCookie(pageUrl).orEmpty()
+        if (raw.isBlank()) return
+        captured = true
+        scope.launch {
+            val base = candidateBases(pageUrl).firstOrNull { candidate ->
+                withContext(Dispatchers.IO) {
+                    runCatching { LocalJwxtApi(candidate, cookieHeader = { raw }).overview() }.isSuccess
+                }
+            }
+            if (base != null) {
+                // Remember the typed pair for the next login, Keystore-encrypted.
+                if (rememberedUser.isNotBlank() && rememberedPass.isNotBlank()) {
+                    runCatching {
+                        top.sykesp42.rin.data.AppContainer.get(this@JwxtLoginActivity)
+                            .jwxtCredentialStore.save(
+                                top.sykesp42.rin.data.SessionCookie(name = rememberedUser, value = rememberedPass)
+                            )
+                    }
+                }
+                runCatching {
+                    top.sykesp42.rin.data.AppContainer.get(this@JwxtLoginActivity)
+                        .jwxtSessions.save(top.sykesp42.rin.data.SessionCookie("Cookie", raw))
+                }
+                Toast.makeText(this@JwxtLoginActivity, "教务已连接", Toast.LENGTH_SHORT).show()
+                setResult(
+                    RESULT_OK,
+                    Intent().putExtra(EXTRA_COOKIE, raw).putExtra(EXTRA_BASE_URL, base)
+                )
+                finish()
+            } else {
+                captured = false
+            }
+        }
+    }
+
     /** Direct host, or the WebVPN-wrapped form (…/https/<token>/…). */
     private fun candidateBases(pageUrl: String): List<String> {
         val result = LinkedHashSet<String>()
@@ -256,6 +393,61 @@ class JwxtLoginActivity : Activity() {
             Intent(context, JwxtLoginActivity::class.java).putExtra(EXTRA_BASE_URL, baseUrl)
 
         private const val DEFAULT_BASE = "https://jwxt.gdupt.edu.cn"
+
+        /**
+         * Injected on every page load: records typed 学号/密码 as the user
+         * TYPES (submit-time reads see CAS-ciphertext), preferring user-ish
+         * fields over captcha boxes. Both input orders push.
+         */
+        val CRED_HOOK_JS = """
+            (function(){
+              if (window.__rinCredHook) return; window.__rinCredHook = 1;
+              function passLike(el){
+                var t=(el.type||'').toLowerCase();
+                if(t==='password') return true;
+                var k=((el.name||'')+' '+(el.id||'')).toLowerCase();
+                return t==='text' && /pass|pwd|(^|[^a-z])mm([^a-z]|${'$'})/.test(k);
+              }
+              function userish(el){
+                var k=((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')).toLowerCase();
+                return /user|name|account|login|sno|xh|学号|账号|用户/.test(k);
+              }
+              var u='', anyU='', p='';
+              function scan(){
+                try{
+                  var inputs=document.querySelectorAll('input');
+                  for(var i=0;i<inputs.length;i++){
+                    var el=inputs[i];
+                    if(passLike(el)) continue;
+                    var t=(el.type||'text').toLowerCase();
+                    if(t!=='text'&&t!=='tel'&&t!=='') continue;
+                    if(!el.value) continue;
+                    if(userish(el)) u=el.value;
+                  }
+                }catch(e){}
+              }
+              function push(){
+                try{
+                  if(!p) return;
+                  if(!u) scan();
+                  var user=u||anyU;
+                  if(user&&p) RinCred.onInput(user,p);
+                }catch(e){}
+              }
+              function track(ev){
+                var el=ev.target;
+                if(!el || el.tagName!=='INPUT') return;
+                if(passLike(el)){ p=el.value; push(); return; }
+                var t=(el.type||'text').toLowerCase();
+                if(t==='text'||t==='tel'||t===''){
+                  if(userish(el)){ u=el.value; if(p) push(); }
+                  else { anyU=el.value; if(p && !u) push(); }
+                }
+              }
+              document.addEventListener('input', track, true);
+              document.addEventListener('change', track, true);
+            })()
+        """.trimIndent()
         private const val WEBVPN_ENTRY = "https://webvpn2.gdupt.edu.cn"
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Rin/1.0"

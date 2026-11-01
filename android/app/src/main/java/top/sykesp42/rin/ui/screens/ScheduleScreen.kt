@@ -181,7 +181,9 @@ fun ScheduleScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    if (schedule.warning != null) {
+                    // 简洁模式 promises no school plumbing on the page: an
+                    // expired session belongs to the settings entry there.
+                    if (schedule.warning != null && !appSettings.simpleMode) {
                         item(key = "schedule-warning") {
                             ScheduleErrorRow(
                                 message = schedule.warning.orEmpty(),

@@ -18,6 +18,15 @@ class AppContainer private constructor(context: Context) {
     val cache = LocalCache(appContext)
     val jwxtSessions: SessionStore = KeystoreSessionStore(File(appContext.filesDir, "jwxt_session.bin"))
 
+    /**
+     * Remembered 学号/密码 for the login page's autofill, Keystore-encrypted
+     * like the session and never leaving the device. Captured while the user
+     * types on the school's own page; the school page still does the actual
+     * login and the slider, this only spares the retyping.
+     */
+    val jwxtCredentialStore: SessionStore =
+        KeystoreSessionStore(File(appContext.filesDir, "jwxt_credential.bin"))
+
     val appVersionName: String by lazy {
         runCatching {
             appContext.packageManager
