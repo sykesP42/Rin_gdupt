@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The license service's domain is blocked by carrier SNI filtering until
+     ICP filing completes; the bare-IP entry is the fallback base. Cleartext
+     stays limited to that one host. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">123.56.99.154</domain>
+    </domain-config>
+</network-security-config>

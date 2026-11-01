@@ -22,6 +22,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /** Device license service is independent from the main course/sign backend. */
 const val LICENSE_BASE_URL = "https://www.sykesp.com/rin-license"
 
+/**
+ * Carrier SNI filtering still blocks the unfiled domain on some mobile
+ * networks; the bare-IP entry (plain HTTP, host-locked in the network
+ * security config) is the transport fallback. Only network-level failures
+ * fall back — server answers (VERIFY_FAILED, throttling) must not.
+ */
+const val LICENSE_FALLBACK_URL = "http://123.56.99.154/rin-license"
+
 class LicenseApiException(
     val code: String,
     override val message: String
@@ -54,6 +62,7 @@ class LicenseApi(
         .build()
 ) {
     private val base = baseUrl.trimEnd('/')
+    private val fallbackBase = LICENSE_FALLBACK_URL.trimEnd('/')
     private val media = "application/json; charset=utf-8".toMediaType()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -115,7 +124,18 @@ class LicenseApi(
         device.forEach { (key, value) -> put(key, value) }
     }
 
-    private suspend fun post(path: String, body: JsonObject): SignAccessRemote = withContext(Dispatchers.IO) {
+    private suspend fun post(path: String, body: JsonObject): SignAccessRemote {
+        try {
+            return postTo(base, path, body)
+        } catch (e: LicenseApiException) {
+            throw e
+        } catch (e: IOException) {
+            if (fallbackBase == base) throw e
+            return postTo(fallbackBase, path, body)
+        }
+    }
+
+    private suspend fun postTo(base: String, path: String, body: JsonObject): SignAccessRemote = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url("$base$path")
             .header("Accept", "application/json")
