@@ -463,11 +463,18 @@ class MonitorService : Service() {
 
         override suspend fun fetchSignQr(roomCode: String): ByteArray? {
             val settings = runCatching { container.settings.current() }.getOrNull() ?: return null
-            // Local mode fetches the school QR directly (one hop less).
-            val local = container.localApi(settings)
-            if (local != null) {
-                return runCatching { withContext(Dispatchers.IO) { local.qrPng(roomCode) } }.getOrNull()
+            // Failover-aware primary: local-first, cloud proxy after repeated
+            // failures — the automation must not depend on one transport. Two
+            // bounded attempts ride out a transient blip inside one round.
+            container.monitorApi(settings)?.let { api ->
+                repeat(2) { attempt ->
+                    runCatching { withContext(Dispatchers.IO) { api.qrPng(roomCode) } }
+                        .getOrNull()?.takeIf(::looksLikePng)?.let { return it }
+                    if (attempt == 0) delay(1200)
+                }
             }
+            // Last resort: mint the QR on the cloud directly (its sign-url
+            // reverse proxy), skipped when no cloud session exists.
             val api = container.client(settings.serverUrl) ?: return null
             return runCatching {
                 withContext(Dispatchers.IO) { api.qrCode(roomCode) }
