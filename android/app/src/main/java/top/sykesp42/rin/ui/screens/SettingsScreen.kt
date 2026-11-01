@@ -213,6 +213,9 @@ fun SettingsScreen(
                         )
                     }
                 }
+                item("advanced") {
+                    SettingsAdvancedGroup(vm = vm, simpleMode = current.simpleMode)
+                }
                 item("about-title") { SectionHeader("关于") }
                 item("about") {
                     SettingsNavigationCard(
