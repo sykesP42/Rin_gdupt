@@ -39,7 +39,7 @@ class MonitorAlarms(private val context: Context) : AlarmSink {
 
     /**
      * Class-start reminder alarm. Independent of the monitor service: the
-     * receiver posts the notification itself, so 后台监控 being off or killed
+     * receiver posts the notification itself, so 后台服务 being off or killed
      * does not silence it. [slot] keeps the PendingIntents distinct.
      */
     fun scheduleReminder(

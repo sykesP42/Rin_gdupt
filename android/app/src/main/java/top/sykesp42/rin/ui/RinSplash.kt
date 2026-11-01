@@ -134,7 +134,7 @@ private val DarkSplashPalette = SplashPalette(
 
 private val WelcomeLines = listOf(
     "今天也从容一点。",
-    "签到交给 Rin，时间留给自己。",
+    "课表交给 Rin，时间留给自己。",
     "早八也能慢慢来。",
     "不慌，时间还够。",
     "今天也要好好上课。",

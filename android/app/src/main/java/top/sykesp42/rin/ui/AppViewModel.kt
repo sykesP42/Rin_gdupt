@@ -294,14 +294,6 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun completeOnboarding() {
-        if (_auth.value !is AuthState.LoggedIn) return
-        viewModelScope.launch {
-            container.settings.setOnboarded(true)
-            _messages.emit("设置完成")
-        }
-    }
-
     fun logout() {
         viewModelScope.launch {
             val current = container.settings.current()
@@ -1154,7 +1146,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     checkScheduleChanges(overview, todayStr)
                 }
                 // Arm today's alarm-only class reminders. They deliberately do
-                // not depend on 后台监控: a reminder that needs the service is a
+                // not depend on 后台服务: a reminder that needs the service is a
                 // reminder that dies with it. Cached data is good enough here.
                 if (weekOverride == 0) {
                     runCatching {

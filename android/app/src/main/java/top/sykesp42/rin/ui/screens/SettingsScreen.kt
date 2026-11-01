@@ -366,7 +366,7 @@ fun SettingsScreen(
         SuiAlertDialog(
             onDismissRequest = { confirmLogout = false },
             title = { Text("退出登录？") },
-            text = { Text("监控会停止，本机记录保留。") },
+            text = { Text("仅清除连接信息，本机数据保留。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmLogout = false
@@ -849,7 +849,7 @@ private fun PermissionSection(
             PermissionRow(
                 title = "通知权限",
                 description = if (notificationsGranted) {
-                    "已开启，会提醒签到"
+                    "已开启，会提醒上课"
                 } else {
                     "未开启，收不到提醒"
                 },
@@ -935,7 +935,7 @@ private fun AboutSection(
             )
         )
         Text(
-            text = "不代签、不共享账号；最终以名单确认为准。",
+            text = "本机数据不出设备，不上传任何服务器。",
             color = colors.textSecondary,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 10.dp)

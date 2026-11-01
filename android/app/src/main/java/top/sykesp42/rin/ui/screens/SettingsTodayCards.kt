@@ -58,7 +58,7 @@ internal fun SettingsTodayCardsContent(
         }
         item(key = "hint") {
             Text(
-                text = "签到消息固定在顶部；其余卡片可在此关闭或上下移动。",
+                text = "卡片可在此关闭或上下移动。",
                 color = colors.textSecondary,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(bottom = 6.dp)

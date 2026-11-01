@@ -308,7 +308,7 @@ private fun JwxtGroup(
             )
         }
         Text(
-            text = "手机直连教务，不绕过签到权限。",
+            text = "手机直连学校教务，数据不出本机。",
             color = colors.textSecondary,
             style = MaterialTheme.typography.labelSmall
         )

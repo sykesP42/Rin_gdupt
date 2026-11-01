@@ -186,15 +186,12 @@ fun SectionTitle(title: String, actionLabel: String? = null, onAction: (() -> Un
 }
 
 fun statusLabel(state: State): String = when (state) {
-    State.IDLE -> "没有签到"
-    State.NOT_STARTED -> "签到未开始"
-    State.WAITING_THRESHOLD -> "等待人数达标"
-    State.READY -> "可以签到"
-    State.EXPIRED -> "签到已结束"
-    State.IDLE -> "不在本次名单"
-    State.IDLE -> "名单有同名"
-    State.IDLE -> "暂不可用"
-    State.CONFIRMED -> "已确认签到"
+    State.IDLE -> "空闲"
+    State.NOT_STARTED -> "未开始"
+    State.WAITING_THRESHOLD -> "准备中"
+    State.READY -> "进行中"
+    State.EXPIRED -> "已结束"
+    State.CONFIRMED -> "已完成"
 }
 
 @Composable
@@ -246,7 +243,7 @@ fun LiveDot(running: Boolean, modifier: Modifier = Modifier) {
     ) {
         Box(Modifier.size(5.dp).clip(CircleShape).background(accent))
         Text(
-            text = if (running) "监控中" else "未开启",
+            text = if (running) "运行中" else "未开启",
             color = accent,
             style = MaterialTheme.typography.labelMedium
         )
@@ -406,6 +403,11 @@ fun InlineError(message: String, onRetry: (() -> Unit)? = null) {
     }
 }
 
+/**
+ * Empty-state line art: Rin's bob hair and a drifting schedule sheet, drawn
+ * with a few hairline strokes on paper — no bitmap, theme-aware.
+ */
+
 @Composable
 fun EmptyState(
     title: String,
@@ -438,147 +440,6 @@ fun EmptyState(
 }
 
 
-/**
- * Empty-state line art: Rin's bob hair and a drifting schedule sheet, drawn
- * with a few hairline strokes on paper — no bitmap, theme-aware.
- */
-@Composable
-private fun RinSketch(modifier: Modifier = Modifier) {
-    val colors = LocalSuiSignColors.current
-    Canvas(modifier = modifier.size(96.dp, 72.dp)) {
-        val ink = colors.textSecondary
-        val signal = colors.signal
-        val stroke = 1.5.dp.toPx()
-        // Schedule sheet: rounded page with a folded corner.
-        val pageLeft = size.width * 0.30f
-        val pageTop = size.height * 0.16f
-        val pageRight = size.width * 0.86f
-        val pageBottom = size.height * 0.92f
-        val fold = size.width * 0.12f
-        val path = Path().apply {
-            moveTo(pageLeft, pageTop)
-            lineTo(pageRight - fold, pageTop)
-            lineTo(pageRight, pageTop + fold)
-            lineTo(pageRight, pageBottom)
-            quadraticTo(pageRight, pageBottom + 3.dp.toPx(), pageRight - 3.dp.toPx(), pageBottom)
-            lineTo(pageLeft + 3.dp.toPx(), pageBottom)
-            quadraticTo(pageLeft, pageBottom, pageLeft, pageBottom - 3.dp.toPx())
-            close()
-        }
-        drawPath(path, color = ink, style = Stroke(stroke, cap = StrokeCap.Round))
-        // Fold crease.
-        drawLine(
-            ink, Offset(pageRight - fold, pageTop), Offset(pageRight, pageTop + fold),
-            strokeWidth = stroke, cap = StrokeCap.Round
-        )
-        // Sheet content lines.
-        for (index in 0..2) {
-            val y = pageTop + fold + 10.dp.toPx() * (index + 1)
-            drawLine(
-                ink.copy(alpha = 0.55f),
-                Offset(pageLeft + 9.dp.toPx(), y),
-                Offset(pageRight - 9.dp.toPx(), y),
-                strokeWidth = stroke * 0.7f,
-                cap = StrokeCap.Round
-            )
-        }
-        // Rin's bob silhouette peeking from the left of the sheet.
-        val headCenter = Offset(size.width * 0.20f, size.height * 0.42f)
-        drawArc(
-            color = signal,
-            startAngle = 180f,
-            sweepAngle = 180f,
-            useCenter = false,
-            topLeft = Offset(headCenter.x - 13.dp.toPx(), headCenter.y - 13.dp.toPx()),
-            size = Size(26.dp.toPx(), 26.dp.toPx()),
-            style = Stroke(stroke, cap = StrokeCap.Round)
-        )
-        // Hair falls on both sides of the bob.
-        drawLine(
-            signal, Offset(headCenter.x - 13.dp.toPx(), headCenter.y),
-            Offset(headCenter.x - 13.dp.toPx(), headCenter.y + 9.dp.toPx()),
-            strokeWidth = stroke, cap = StrokeCap.Round
-        )
-        drawLine(
-            signal, Offset(headCenter.x + 13.dp.toPx(), headCenter.y),
-            Offset(headCenter.x + 13.dp.toPx(), headCenter.y + 9.dp.toPx()),
-            strokeWidth = stroke, cap = StrokeCap.Round
-        )
-        // The gaze: two quiet ticks.
-        drawLine(
-            ink, Offset(headCenter.x - 5.dp.toPx(), headCenter.y + 2.dp.toPx()),
-            Offset(headCenter.x - 5.dp.toPx(), headCenter.y + 5.dp.toPx()),
-            strokeWidth = stroke * 0.8f, cap = StrokeCap.Round
-        )
-        drawLine(
-            ink, Offset(headCenter.x + 5.dp.toPx(), headCenter.y + 2.dp.toPx()),
-            Offset(headCenter.x + 5.dp.toPx(), headCenter.y + 5.dp.toPx()),
-            strokeWidth = stroke * 0.8f, cap = StrokeCap.Round
-        )
-    }
-}
-
-@Composable
-fun ThresholdBar(
-    signed: Int,
-    roster: Int,
-    threshold: Int,
-    modifier: Modifier = Modifier
-) {
-    val colors = LocalSuiSignColors.current
-    val reached = threshold > 0 && signed >= threshold
-    val accent = if (signed == 0) colors.textSecondary else if (reached) colors.signal else colors.warning
-    val animations = LocalAnimationsEnabled.current
-    val rosterFraction = if (roster > 0) (signed.toFloat() / roster).coerceIn(0f, 1f) else 0f
-    val thresholdFraction = if (roster > 0) (threshold.toFloat() / roster).coerceIn(0f, 1f) else 0f
-    val rosterAnimated by animateFloatAsState(
-        targetValue = rosterFraction,
-        animationSpec = if (animations) tween(420, easing = FastOutSlowInEasing) else tween(0),
-        label = "threshold_roster"
-    )
-    val thresholdAnimated by animateFloatAsState(
-        targetValue = thresholdFraction,
-        animationSpec = if (animations) tween(420, easing = FastOutSlowInEasing) else tween(0),
-        label = "threshold_marker"
-    )
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(9.dp)
-            .semantics {
-                contentDescription = "已签到 $signed 人，阈值 $threshold 人，名单 $roster 人"
-            }
-    ) {
-        val markerX = maxWidth * thresholdAnimated
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .align(Alignment.Center)
-                .clip(CircleShape)
-                .background(colors.text.copy(alpha = 0.08f))
-        )
-        if (rosterAnimated > 0f) {
-            Box(
-                Modifier
-                    .fillMaxWidth(rosterAnimated)
-                    .height(6.dp)
-                    .align(Alignment.CenterStart)
-                    .clip(CircleShape)
-                    .background(accent)
-            )
-        }
-        if (threshold > 0 && thresholdAnimated > 0.02f && thresholdAnimated < 0.98f) {
-            Box(
-                Modifier
-                    .offset(x = markerX - 0.75.dp)
-                    .width(1.5.dp)
-                    .fillMaxHeight()
-                    .background(colors.text.copy(alpha = 0.55f))
-            )
-        }
-    }
-}
 
 @Composable
 fun Radar(running: Boolean, modifier: Modifier = Modifier.size(40.dp)) {
@@ -1347,3 +1208,63 @@ fun suiTextFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTrailingIconColor = LocalSuiSignColors.current.signal,
     unfocusedTrailingIconColor = LocalSuiSignColors.current.textSecondary
 )
+
+/**
+ * Empty-state line art: Rin's bob hair and a drifting schedule sheet, drawn
+ * with a few hairline strokes on paper — no bitmap, theme-aware.
+ */
+@Composable
+private fun RinSketch(modifier: Modifier = Modifier) {
+    val colors = LocalSuiSignColors.current
+    Canvas(modifier = modifier.size(96.dp, 72.dp)) {
+        val ink = colors.textSecondary
+        val signal = colors.signal
+        val stroke = 1.5.dp.toPx()
+        // Schedule sheet: rounded page with a folded corner.
+        val pageLeft = size.width * 0.30f
+        val pageTop = size.height * 0.16f
+        val pageRight = size.width * 0.86f
+        val pageBottom = size.height * 0.92f
+        val fold = size.width * 0.12f
+        val path = Path().apply {
+            moveTo(pageLeft, pageTop)
+            lineTo(pageRight - fold, pageTop)
+            lineTo(pageRight, pageTop + fold)
+            lineTo(pageRight, pageBottom)
+            quadraticTo(pageRight, pageBottom + 3.dp.toPx(), pageRight - 3.dp.toPx(), pageBottom)
+            lineTo(pageLeft + 3.dp.toPx(), pageBottom)
+            quadraticTo(pageLeft, pageBottom, pageLeft, pageBottom - 3.dp.toPx())
+            close()
+        }
+        drawPath(path, color = ink, style = Stroke(stroke, cap = StrokeCap.Round))
+        drawLine(
+            ink, Offset(pageRight - fold, pageTop), Offset(pageRight, pageTop + fold),
+            strokeWidth = stroke, cap = StrokeCap.Round
+        )
+        for (index in 0..2) {
+            val y = pageTop + fold + 10.dp.toPx() * (index + 1)
+            drawLine(
+                ink.copy(alpha = 0.55f),
+                Offset(pageLeft + 9.dp.toPx(), y),
+                Offset(pageRight - 9.dp.toPx(), y),
+                strokeWidth = stroke * 0.7f,
+                cap = StrokeCap.Round
+            )
+        }
+        val headCenter = Offset(size.width * 0.20f, size.height * 0.42f)
+        drawArc(
+            color = signal,
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = false,
+            topLeft = Offset(headCenter.x - 13.dp.toPx(), headCenter.y - 13.dp.toPx()),
+            size = Size(26.dp.toPx(), 26.dp.toPx()),
+            style = Stroke(stroke, cap = StrokeCap.Round)
+        )
+        drawLine(
+            signal, Offset(headCenter.x - 13.dp.toPx(), headCenter.y),
+            Offset(headCenter.x - 13.dp.toPx(), headCenter.y + 9.dp.toPx()),
+            strokeWidth = stroke, cap = StrokeCap.Round
+        )
+    }
+}

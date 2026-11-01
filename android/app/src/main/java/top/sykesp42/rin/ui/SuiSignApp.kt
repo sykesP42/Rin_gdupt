@@ -47,7 +47,6 @@ import top.sykesp42.rin.ui.components.BrandMark
 import top.sykesp42.rin.ui.components.RinBackdrop
 import top.sykesp42.rin.ui.components.RinBottomBar
 import top.sykesp42.rin.ui.components.ThemePickerSheet
-import top.sykesp42.rin.ui.screens.OnboardingScreen
 import top.sykesp42.rin.ui.screens.ScheduleScreen
 import top.sykesp42.rin.ui.screens.SettingsScreen
 import top.sykesp42.rin.ui.screens.TodayScreen
@@ -111,27 +110,12 @@ fun SuiSignApp(vm: AppViewModel, settings: AppSettings?, initialTab: MainTab = M
         return
     }
 
-    val currentAuth = auth
-    when (currentAuth) {
-        is AuthState.LoggedOut -> OnboardingScreen(
-            vm = vm,
-            auth = currentAuth,
-            settings = settings,
-            fullFlow = !settings.onboarded
-        )
-        is AuthState.LoggedIn -> {
-            if (!settings.onboarded) {
-                OnboardingScreen(
-                    vm = vm,
-                    auth = currentAuth,
-                    settings = settings,
-                    fullFlow = true
-                )
-            } else {
-                MainScaffold(vm = vm, settings = settings, user = currentAuth.user, initialTab = initialTab)
-            }
-        }
-        AuthState.Loading -> Unit
+    // No onboarding and no account gate in this build: the local profile is
+    // the account and every non-sign feature is available from first launch.
+    when (val currentAuth = auth) {
+        is AuthState.LoggedIn ->
+            MainScaffold(vm = vm, settings = settings, user = currentAuth.user, initialTab = initialTab)
+        else -> Unit
     }
 }
 

@@ -42,20 +42,20 @@ enum class NoticePlate(val key: String, val label: String) {
  * "which face the sign-in-ready notification wears" without knowing enum internals.
  */
 enum class NoticeSlot(val key: String, val label: String, val default: NoticeIcon) {
-    MONITOR("monitor", "后台监控中", NoticeIcon.FOCUS),
+    MONITOR("monitor", "保持安静", NoticeIcon.FOCUS),
     SESSION("session", "教务会话保活", NoticeIcon.SLEEPY),
-    READY("ready", "可以签到", NoticeIcon.BECKON),
-    CONFIRMED("confirmed", "已确认签到", NoticeIcon.HAPPY),
-    UNCONFIRMED("unconfirmed", "未确认签到", NoticeIcon.CONFUSED),
-    UNREADABLE("unreadable", "名单读取失败", NoticeIcon.OFFLINE),
-    ERROR("error", "监控异常", NoticeIcon.PANIC),
+    READY("ready", "进行中", NoticeIcon.BECKON),
+    CONFIRMED("confirmed", "已完成", NoticeIcon.HAPPY),
+    UNCONFIRMED("unconfirmed", "待确认", NoticeIcon.CONFUSED),
+    UNREADABLE("unreadable", "暂时读不到", NoticeIcon.OFFLINE),
+    ERROR("error", "出了点问题", NoticeIcon.PANIC),
     CLASS_REMINDER("class", "上课提醒", NoticeIcon.ALERT),
     GRADES("grades", "新成绩发布", NoticeIcon.DELIGHT),
     SCHEDULE_CHANGE("schedule", "课表变动", NoticeIcon.CHANGE),
-    WAITING("waiting", "等待人数达标", NoticeIcon.THINK),
-    NOT_IN_ROSTER("not_in_roster", "本人不在名单", NoticeIcon.BLOCKED),
-    AMBIGUOUS("ambiguous", "名单有同名", NoticeIcon.AWKWARD),
-    EXPIRED("expired", "签到已结束", NoticeIcon.WAVE);
+    WAITING("waiting", "准备中", NoticeIcon.THINK),
+    NOT_IN_ROSTER("not_in_roster", "暂时没有", NoticeIcon.BLOCKED),
+    AMBIGUOUS("ambiguous", "待确认", NoticeIcon.AWKWARD),
+    EXPIRED("expired", "已结束", NoticeIcon.WAVE);
 
     companion object {
         fun from(key: String?): NoticeSlot? = entries.firstOrNull { it.key == key }

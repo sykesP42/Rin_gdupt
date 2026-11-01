@@ -83,7 +83,7 @@ internal fun TodaySourceStrip(
             if (at != null) append(" · 显示 $at 的缓存")
         }
         fromCache -> if (at != null) "缓存 · 更新于 $at" else "显示的是缓存"
-        else -> "实时数据 · 名单还没加载"
+        else -> "实时数据"
     }
     Row(
         modifier = Modifier

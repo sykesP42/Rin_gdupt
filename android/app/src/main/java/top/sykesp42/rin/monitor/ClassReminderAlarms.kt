@@ -8,7 +8,7 @@ import top.sykesp42.rin.data.SettingsRepository
 /**
  * Re-arms class-start reminders from the loaded week. Idempotent: every call
  * cancels the old slots first, so opening the app twice cannot stack
- * notifications. Reminders survive 后台监控 being off; they are pure alarms.
+ * notifications. Reminders survive 后台服务 being off; they are pure alarms.
  *
  * Only an overview that actually covers today may arm alarms — a cached week
  * from last week still lists classes, and arming those would remind the wrong

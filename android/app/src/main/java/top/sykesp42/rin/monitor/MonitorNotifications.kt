@@ -32,75 +32,28 @@ class MonitorNotifications(private val context: Context) {
         // channels were created before the Rin mask existed, so recreate them
         // once instead of letting the stale green check survive every update.
         LEGACY_CHANNELS.forEach { runCatching { manager.deleteNotificationChannel(it) } }
-        val monitor = NotificationChannel(CHANNEL_MONITOR, "后台监控", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "课堂窗口内的常驻通知"
-            setShowBadge(false)
-            setSound(null, null)
-        }
-        val ready = NotificationChannel(CHANNEL_READY, "签到就绪", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "人数够了或轮到你操作时提醒"
+        val ready = NotificationChannel(CHANNEL_READY, "课程提醒", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "快上课时提醒你去哪间教室"
             enableVibration(true)
         }
-        val errors = NotificationChannel(CHANNEL_ERRORS, "监控异常", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            description = "登录失效，或后台监控被系统限制"
+        val errors = NotificationChannel(CHANNEL_ERRORS, "异常提示", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "教务会话失效等需要处理的提示"
         }
         val session = NotificationChannel(CHANNEL_SESSION, "教务会话保活", NotificationManager.IMPORTANCE_MIN).apply {
-            description = "本地模式下每 10 分钟轻量续期一次教务会话"
+            description = "每 10 分钟轻量续期一次教务会话"
             setShowBadge(false)
             setSound(null, null)
         }
-        manager.createNotificationChannels(listOf(monitor, ready, errors, session))
-    }
-
-    fun buildSession(text: String): Notification {
-        val builder = Notification.Builder(context, CHANNEL_SESSION)
-            .brand(NoticeSlot.SESSION)
-            .setContentTitle("Rin 保持教务会话")
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(openApp(REQUEST_OPEN_SESSION))
-        if (Build.VERSION.SDK_INT >= 31) {
-            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-        }
-        return builder.build()
-    }
-
-    fun updateSession(text: String) {
-        manager.notify(NOTIFICATION_SESSION, buildSession(text))
+        manager.createNotificationChannels(listOf(ready, errors, session))
     }
 
     fun canPost(): Boolean =
         Build.VERSION.SDK_INT < 33 ||
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    fun buildMonitor(text: String, slot: NoticeSlot = NoticeSlot.MONITOR): Notification {
-        val builder = Notification.Builder(context, CHANNEL_MONITOR)
-            .brand(slot)
-            .setContentTitle("Rin正在监控")
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(openApp(REQUEST_OPEN_MONITOR))
-        if (Build.VERSION.SDK_INT >= 31) {
-            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-        }
-        return builder.build()
-    }
-
-    fun updateMonitor(text: String, slot: NoticeSlot = NoticeSlot.MONITOR) {
-        manager.notify(NOTIFICATION_MONITOR, buildMonitor(text, slot))
-    }
-
     fun showClassReminder(courseName: String, location: String) {
         if (!canPost()) return
-        val text = listOf(location.takeIf { it.isNotBlank() }, "上课了，记得自己扫码签到")
+        val text = listOf(location.takeIf { it.isNotBlank() }, "要上课了，带好东西去教室")
             .filterNotNull()
             .joinToString(" · ")
         val builder = Notification.Builder(context, CHANNEL_READY)
@@ -134,37 +87,27 @@ class MonitorNotifications(private val context: Context) {
         manager.notify(NOTIFICATION_SCHEDULE_CHANGE, builder.build())
     }
 
-    fun showConfirmed() {
-        if (!canPost()) return
-        val notification = Notification.Builder(context, CHANNEL_READY)
-            .brand(NoticeSlot.CONFIRMED)
-            .setContentTitle("已确认签到")
-            .setContentText("名单里已有你，不用再签")
-            .setAutoCancel(true)
-            .setCategory(Notification.CATEGORY_STATUS)
+    fun buildSession(text: String): Notification {
+        val builder = Notification.Builder(context, CHANNEL_SESSION)
+            .brand(NoticeSlot.SESSION)
+            .setContentTitle("Rin 保持教务会话")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setCategory(Notification.CATEGORY_SERVICE)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(openApp(REQUEST_OPEN_CONFIRMED))
-            .build()
-        manager.notify(NOTIFICATION_CONFIRMED, notification)
+            .setContentIntent(openApp(REQUEST_OPEN_SESSION))
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        return builder.build()
     }
 
-    fun showUnconfirmed(reachable: Boolean = true) {
-        if (!canPost()) return
-        val notification = Notification.Builder(context, CHANNEL_ERRORS)
-            .brand(if (reachable) NoticeSlot.UNCONFIRMED else NoticeSlot.UNREADABLE)
-            .setContentTitle("需要打开 Rin 确认")
-            .setContentText(if (reachable) "点开查看当前状态" else "网络暂时不可达")
-            .setAutoCancel(true)
-            .setCategory(Notification.CATEGORY_ERROR)
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(openApp(REQUEST_OPEN_UNCONFIRMED))
-            .build()
-        manager.notify(NOTIFICATION_UNCONFIRMED, notification)
+    fun updateSession(text: String) {
+        manager.notify(NOTIFICATION_SESSION, buildSession(text))
     }
 
-    fun cancelReady() {
-        manager.cancel(NOTIFICATION_READY)
-    }
 
     fun showError(title: String, text: String) {
         if (!canPost()) return

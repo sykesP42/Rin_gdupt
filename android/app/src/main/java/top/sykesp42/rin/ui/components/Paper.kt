@@ -338,60 +338,20 @@ fun DataBand(
     )
 }
 
-/** In-flow action dock: one full-width primary action + monitor line. */
+/** In-flow action dock: one full-width primary action. */
 @Composable
 fun PageActionBar(
     primaryLabel: String,
     onPrimary: () -> Unit,
-    monitorEnabled: Boolean,
-    onMonitorChange: (Boolean) -> Unit,
-    monitorDetail: String? = null,
-    monitorDetailRequiresEnabled: Boolean = false
+    modifier: Modifier = Modifier
 ) {
     val colors = LocalSuiSignColors.current
-    val monitorText = buildString {
-        append(if (monitorEnabled) "后台监控已开启" else "后台监控未开启")
-        // Running details are gated by the caller's enabled flag; neutral
-        // last-check copy may remain visible while monitoring is off.
-        if (
-            !monitorDetail.isNullOrBlank() &&
-            (!monitorDetailRequiresEnabled || monitorEnabled)
-        ) {
-            append(" · ").append(monitorDetail)
-        }
-    }
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth()) {
         SuiPrimaryButton(
             text = primaryLabel,
             onClick = onPrimary,
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                Modifier
-                    .size(5.dp)
-                    .background(
-                        if (monitorEnabled) colors.signal else colors.textSecondary,
-                        CircleShape
-                    )
-            )
-            Spacer(Modifier.width(7.dp))
-            Text(
-                text = monitorText,
-                color = colors.textSecondary,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
-                modifier = Modifier.weight(1f)
-            )
-            SuiSwitch(
-                checked = monitorEnabled,
-                onCheckedChange = onMonitorChange,
-                contentDescription = "后台监控"
-            )
-        }
     }
 }
+
