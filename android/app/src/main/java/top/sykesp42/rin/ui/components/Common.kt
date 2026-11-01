@@ -195,7 +195,7 @@ fun LiveDot(running: Boolean, modifier: Modifier = Modifier) {
     ) {
         Box(Modifier.size(5.dp).clip(CircleShape).background(accent))
         Text(
-            text = if (running) "监控中" else "未开启",
+            text = if (running) "运行中" else "未开启",
             color = accent,
             style = MaterialTheme.typography.labelMedium
         )
@@ -1234,3 +1234,104 @@ fun suiTextFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTrailingIconColor = LocalRinColors.current.signal,
     unfocusedTrailingIconColor = LocalRinColors.current.textSecondary
 )
+
+/**
+ * The one error row a paper page uses: hairline top, warning tint, message and
+ * a single retry action. Ported as-is from the full client so both builds fail
+ * the same way.
+ */
+@Composable
+fun ScheduleErrorRow(message: String, onRetry: () -> Unit, actionLabel: String = "重试") {
+    val colors = LocalRinColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.warning.copy(alpha = 0.06f))
+    ) {
+        Hairline()
+        Row(
+            modifier = Modifier.padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = null,
+                tint = colors.warning,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = message,
+                color = colors.text,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = onRetry,
+                modifier = Modifier.heightIn(min = 48.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text(
+                    text = actionLabel,
+                    color = colors.text,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+        Hairline()
+    }
+}
+
+/**
+ * Equal-width segmented selector with the sky underline. Ported from the full
+ * client: the campus / weekday / block filters all use it, so the 校务 page
+ * reads the same in both builds.
+ */
+@Composable
+fun PaperSelectorRow(
+    options: List<Pair<String, String>>,
+    selectedValue: String,
+    onSelect: (String) -> Unit
+) {
+    val colors = LocalRinColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        options.forEach { (label, value) ->
+            val selected = value == selectedValue
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .selectable(
+                        selected = selected,
+                        onClick = { onSelect(value) },
+                        role = Role.Tab
+                    )
+                    .padding(top = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = label,
+                    color = if (selected) colors.text else colors.textSecondary,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1
+                )
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    Modifier
+                        .width(14.dp)
+                        .height(2.dp)
+                        .background(
+                            if (selected) colors.signal else Color.Transparent,
+                            RoundedCornerShape(1.dp)
+                        )
+                )
+            }
+        }
+    }
+}

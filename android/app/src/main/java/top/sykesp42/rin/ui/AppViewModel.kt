@@ -9,12 +9,15 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import top.sykesp42.rin.data.ApiScheduleEvent
 import top.sykesp42.rin.data.ApiScheduleOverview
@@ -22,6 +25,11 @@ import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.AppSettings
 import top.sykesp42.rin.data.CourseOverride
 import top.sykesp42.rin.data.CourseReminder
+import top.sykesp42.rin.data.JwxtCalendarDay
+import top.sykesp42.rin.data.JwxtExam
+import top.sykesp42.rin.data.JwxtFreeRoom
+import top.sykesp42.rin.data.JwxtGrade
+import top.sykesp42.rin.data.JwxtTermCourse
 import top.sykesp42.rin.data.ManualCourse
 import top.sykesp42.rin.data.ManualExam
 import top.sykesp42.rin.data.ManualMove
@@ -33,13 +41,19 @@ import top.sykesp42.rin.data.defaultTermStart
 import top.sykesp42.rin.data.LocalJwxtApi
 import top.sykesp42.rin.data.SessionCookie
 import top.sykesp42.rin.reminder.CourseReminderScheduler
-import top.sykesp42.rin.ui.schedule.campusZone
 import top.sykesp42.rin.ui.faces.NoticeFaces
 import top.sykesp42.rin.ui.faces.NoticeIcon
 import top.sykesp42.rin.ui.faces.NoticeSlot
 import top.sykesp42.rin.ui.profile.Profile
+import top.sykesp42.rin.ui.schedule.ROOM_SLOTS
+import top.sykesp42.rin.ui.schedule.RoomSlot
+import top.sykesp42.rin.ui.schedule.campusZone
+import top.sykesp42.rin.ui.schedule.isRoomFree
+import top.sykesp42.rin.ui.schedule.normalizeRoomName
 import top.sykesp42.rin.ui.schedule.nowMinutesAt
+import top.sykesp42.rin.ui.schedule.roomSlotAt
 import top.sykesp42.rin.ui.schedule.todayAtCampusClock
+import top.sykesp42.rin.ui.schedule.weekNumberFor
 import top.sykesp42.rin.ui.today.TodayCardId
 import top.sykesp42.rin.ui.today.TodayCards
 
@@ -73,6 +87,69 @@ data class CourseDetailUiState(
     val meetings: List<CourseMeeting> = emptyList()
 )
 
+/** One teaching block of a room, as the school answers it. */
+data class RoomSlotState(
+    val slot: RoomSlot,
+    // null = the school has no occupancy answer for this room in this block.
+    val free: Boolean?
+)
+
+/**
+ * The room helper's detail: what the school knows about one room today plus
+ * whatever the local timetable can add ("your class is here at 14:30").
+ */
+data class RoomDetailUiState(
+    val roomName: String = "",
+    val campus: String = "",
+    val building: String = "",
+    val area: String = "",
+    val capacity: Int = 0,
+    val slots: List<RoomSlotState> = emptyList(),
+    val loading: Boolean = true,
+    val myCourses: List<String> = emptyList(),
+    val alternatives: List<String> = emptyList(),
+    val error: String = ""
+)
+
+/**
+ * 校历 state, same shape as the full client's so the calendar screens port over
+ * unchanged: loading/error/term plus the flat day list.
+ */
+data class CalendarUiState(
+    val loading: Boolean = false,
+    val days: List<JwxtCalendarDay> = emptyList(),
+    val term: String = "",
+    val termLabel: String = "",
+    val error: String = "",
+    val fromCache: Boolean = false,
+    val cachedAt: String = ""
+)
+
+/**
+ * 校务 page state: the room helper's free-room answer for one day + block,
+ * plus the read-only academic lists (exams, grades, calendar) on the same page.
+ */
+data class AcademicUiState(
+    val day: LocalDate = LocalDate.now(campusZone),
+    val slot: RoomSlot = ROOM_SLOTS.first(),
+    val week: Int = 0,
+    val rooms: List<JwxtFreeRoom> = emptyList(),
+    val campus: String = "",
+    val loading: Boolean = false,
+    val error: String = "",
+    val updatedAt: String = "",
+    val exams: List<JwxtExam> = emptyList(),
+    val examsLoading: Boolean = false,
+    val examsError: String = "",
+    val grades: List<JwxtGrade> = emptyList(),
+    val gradesLoading: Boolean = false,
+    val gradesError: String = "",
+    val termCourses: List<JwxtTermCourse> = emptyList(),
+    val termCoursesLoading: Boolean = false,
+    val termCoursesError: String = "",
+    val detail: RoomDetailUiState? = null
+)
+
 class AppViewModel(private val container: AppContainer) : ViewModel() {
     private val settingsRepo = container.settings
 
@@ -99,6 +176,19 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _jwxtConnected = MutableStateFlow(container.jwxtSessions.load() != null)
     val jwxtConnected: StateFlow<Boolean> = _jwxtConnected.asStateFlow()
+
+    private val _academic = MutableStateFlow(AcademicUiState())
+    val academic: StateFlow<AcademicUiState> = _academic.asStateFlow()
+
+    private val _calendar = MutableStateFlow(CalendarUiState())
+    val calendar: StateFlow<CalendarUiState> = _calendar.asStateFlow()
+
+    /**
+     * weekday|block|week → the school's free-room answer. The room helper asks
+     * the same five blocks again when a detail sheet opens, so this keeps that
+     * to one network round per block per day.
+     */
+    private val roomFreeCache = mutableMapOf<String, List<JwxtFreeRoom>>()
 
     /**
      * Last overview read from the school. Kept separately because [rebuild]
@@ -235,30 +325,414 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     container.cache.write("schedule_week0", ApiScheduleOverview.serializer(), overview)
                 }
                 .onFailure { error ->
-                    val expired = error is LocalJwxtApi.JwxtSessionExpired ||
-                        error is LocalJwxtApi.JwxtCaptchaRequired
-                    if (expired) {
-                        jwxtOverview = null
-                        container.jwxtSessions.clear()
-                        _jwxtConnected.value = false
-                        settingsRepo.setJwxtConnectedAt("")
-                    }
-                    _schedule.value = _schedule.value.copy(
-                        warning = if (expired) {
-                            "教务登录已过期，请到「我的 → 教务连接」重新登录。"
-                        } else {
-                            "教务暂时不可用，当前显示本机课表。"
-                        }
-                    )
+                    handleJwxtFailure(error)
                 }
         }
     }
+
+    /**
+     * One place that turns a failed read into the same state change everywhere:
+     * an expired session disconnects, anything else only warns.
+     */
+    private fun handleJwxtFailure(error: Throwable) {
+        val expired = error is LocalJwxtApi.JwxtSessionExpired ||
+            error is LocalJwxtApi.JwxtCaptchaRequired
+        if (expired) {
+            jwxtOverview = null
+            container.jwxtSessions.clear()
+            _jwxtConnected.value = false
+            viewModelScope.launch { settingsRepo.setJwxtConnectedAt("") }
+            _schedule.value = _schedule.value.copy(
+                warning = "教务登录已过期，请到「我的 → 教务连接」重新登录。"
+            )
+        } else {
+            _schedule.value = _schedule.value.copy(
+                warning = "教务暂时不可用，当前显示本机课表。"
+            )
+        }
+    }
+
+    /** A JWXT client bound to the stored session, or null when not connected. */
+    private fun jwxtApi(snapshot: AppSettings): LocalJwxtApi? {
+        val stored = container.jwxtSessions.load() ?: return null
+        return LocalJwxtApi(
+            baseUrl = snapshot.jwxtBaseUrl,
+            cookieHeader = { container.jwxtSessions.load()?.value ?: stored.value },
+            onCookieUpdate = { header ->
+                runCatching { container.jwxtSessions.save(SessionCookie("Cookie", header)) }
+            },
+            clock = LocalDateTime.now(campusZone)
+        )
+    }
+
 
     fun setTermStart(date: LocalDate) {
         viewModelScope.launch {
             settingsRepo.setTermStartDate(date.toString())
             _settings.value?.let { rebuild(it, 0) }
         }
+    }
+
+    // ---- 校务：教室助手 + 考试 + 成绩 --------------------------------------
+
+    /**
+     * First entry to the 校务 page. The block is chosen from the school clock
+     * once; after that the user's own pick sticks until the page is refreshed.
+     */
+    fun openAcademic() {
+        val snapshot = _settings.value ?: return
+        if (snapshot.simpleMode) return
+        val state = _academic.value
+        // week > 0 only happens after a successful load, so this is "first time
+        // this session" rather than "list is momentarily empty".
+        val firstOpen = state.week == 0
+        if (firstOpen) {
+            _academic.update {
+                it.copy(
+                    day = todayAtCampusClock(),
+                    slot = roomSlotAt(nowMinutesAt()) ?: ROOM_SLOTS.last()
+                )
+            }
+        }
+        if (firstOpen || (state.rooms.isEmpty() && state.error.isBlank() && !state.loading)) {
+            loadFreeRooms()
+        }
+        if (state.exams.isEmpty() && state.examsError.isBlank() && !state.examsLoading) loadExams()
+        if (state.grades.isEmpty() && state.gradesError.isBlank() && !state.gradesLoading) loadGrades()
+    }
+
+    fun selectAcademicDay(day: LocalDate) {
+        if (day == _academic.value.day) return
+        // Drop the previous day's answer so the header can never label one
+        // day's rooms with another day's date.
+        _academic.update { it.copy(day = day, rooms = emptyList(), error = "") }
+        loadFreeRooms()
+    }
+
+    fun selectAcademicSlot(slot: RoomSlot) {
+        if (slot == _academic.value.slot) return
+        _academic.update { it.copy(slot = slot, rooms = emptyList(), error = "") }
+        loadFreeRooms()
+    }
+
+    /** Pick a weekday inside the current teaching week, the way the full client does. */
+    fun selectAcademicWeekday(weekday: Int) {
+        if (weekday !in 1..7) return
+        val today = todayAtCampusClock()
+        val monday = today.with(java.time.DayOfWeek.MONDAY)
+        selectAcademicDay(monday.plusDays((weekday - 1).toLong()))
+    }
+
+    fun selectAcademicCampus(campus: String) {
+        _academic.update { it.copy(campus = campus) }
+    }
+
+    fun refreshAcademic() {
+        roomFreeCache.clear()
+        loadFreeRooms(force = true)
+        loadExams(force = true)
+        loadGrades(force = true)
+        loadCalendar(force = true)
+    }
+
+    /** The calendar segment asks for its own reads the first time it is shown. */
+    fun ensureCalendar() {
+        val state = _calendar.value
+        if (state.days.isEmpty() && !state.loading && state.error.isBlank()) {
+            loadCalendar()
+        }
+        // The calendar's day sheet lists that day's classes, which come from the
+        // term timetable rather than the current week.
+        val academic = _academic.value
+        if (academic.termCourses.isEmpty() &&
+            !academic.termCoursesLoading &&
+            academic.termCoursesError.isBlank()
+        ) {
+            loadTermCourses()
+        }
+    }
+
+    private fun loadTermCourses(force: Boolean = false) {
+        val snapshot = _settings.value ?: return
+        if (_academic.value.termCoursesLoading) return
+        if (!force && _academic.value.termCourses.isNotEmpty()) return
+        val api = jwxtApi(snapshot) ?: return
+        _academic.update { it.copy(termCoursesLoading = true, termCoursesError = "") }
+        viewModelScope.launch {
+            runCatching { api.fetchTermCourses() }
+                .onSuccess { courses ->
+                    _academic.update { state ->
+                        state.copy(termCourses = courses, termCoursesLoading = false)
+                    }
+                }
+                .onFailure { error ->
+                    _academic.update { state ->
+                        state.copy(
+                            termCoursesLoading = false,
+                            termCoursesError = academicErrorText(error)
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadCalendar(force: Boolean = false) {
+        val snapshot = _settings.value ?: return
+        if (_calendar.value.loading) return
+        if (!force && _calendar.value.days.isNotEmpty()) return
+        val api = jwxtApi(snapshot) ?: return
+        _calendar.update { it.copy(loading = true, error = "") }
+        viewModelScope.launch {
+            runCatching { api.fetchCalendar() }
+                .onSuccess { calendar ->
+                    _calendar.value = CalendarUiState(
+                        loading = false,
+                        days = calendar?.days.orEmpty(),
+                        term = calendar?.term.orEmpty(),
+                        termLabel = calendar?.termLabel.orEmpty(),
+                        error = if (calendar == null) "教务没有返回校历" else ""
+                    )
+                }
+                .onFailure { error ->
+                    _calendar.update { it.copy(loading = false, error = academicErrorText(error)) }
+                }
+        }
+    }
+
+    private fun loadFreeRooms(force: Boolean = false) {
+        val snapshot = _settings.value ?: return
+        val api = jwxtApi(snapshot) ?: run {
+            _academic.update {
+                it.copy(loading = false, error = "先在「我的 → 教务连接」登录教务，才能查教室")
+            }
+            return
+        }
+        val state = _academic.value
+        _academic.update { it.copy(loading = true, error = "") }
+        viewModelScope.launch {
+            runCatching {
+                val context = api.contextSnapshot()
+                val weekday = state.day.dayOfWeek.value
+                val week = weekNumberFor(state.day, context.currentWeek, todayAtCampusClock())
+                val key = "$weekday|${state.slot.key}|$week"
+                val cached = roomFreeCache[key].takeIf { !force && it != null }
+                val rooms = cached ?: readFreeRooms(api, context.currentTerm, weekday, week, state.slot.key)
+                    .also { roomFreeCache[key] = it }
+                rooms to week
+            }.onSuccess { (rooms, week) ->
+                _academic.update {
+                    it.copy(
+                        rooms = rooms,
+                        week = week,
+                        loading = false,
+                        error = "",
+                        updatedAt = LocalTime.now(campusZone)
+                            .format(DateTimeFormatter.ofPattern("HH:mm"))
+                    )
+                }
+            }.onFailure { error ->
+                // A page-local read failure must not raise the schedule banner;
+                // only an actually expired session is worth the global warning.
+                if (error is LocalJwxtApi.JwxtSessionExpired ||
+                    error is LocalJwxtApi.JwxtCaptchaRequired
+                ) {
+                    handleJwxtFailure(error)
+                }
+                _academic.update {
+                    it.copy(loading = false, error = academicErrorText(error))
+                }
+            }
+        }
+    }
+
+    /**
+     * Campus wifi drops single requests now and then; one silent retry turns
+     * that into a slower answer instead of an error the user has to tap away.
+     */
+    private suspend fun readFreeRooms(
+        api: LocalJwxtApi,
+        term: String,
+        weekday: Int,
+        week: Int,
+        slotKey: String
+    ): List<JwxtFreeRoom> = runCatching {
+        api.freeRoomsIn(term, weekday, week, slotKey)
+    }.getOrElse { error ->
+        if (error is LocalJwxtApi.JwxtSessionExpired || error is LocalJwxtApi.JwxtCaptchaRequired) {
+            throw error
+        }
+        kotlinx.coroutines.delay(700)
+        api.freeRoomsIn(term, weekday, week, slotKey)
+    }
+
+    private fun loadExams(force: Boolean = false) {
+        val snapshot = _settings.value ?: return
+        if (_academic.value.examsLoading) return
+        if (!force && _academic.value.exams.isNotEmpty()) return
+        val api = jwxtApi(snapshot) ?: return
+        _academic.update { it.copy(examsLoading = true, examsError = "") }
+        viewModelScope.launch {
+            runCatching { api.fetchExams() }
+                .onSuccess { exams ->
+                    _academic.update { state -> state.copy(exams = exams, examsLoading = false) }
+                }
+                .onFailure { error ->
+                    _academic.update { state ->
+                        state.copy(examsLoading = false, examsError = academicErrorText(error))
+                    }
+                }
+        }
+    }
+
+    private fun loadGrades(force: Boolean = false) {
+        val snapshot = _settings.value ?: return
+        if (_academic.value.gradesLoading) return
+        if (!force && _academic.value.grades.isNotEmpty()) return
+        val api = jwxtApi(snapshot) ?: return
+        _academic.update { it.copy(gradesLoading = true, gradesError = "") }
+        viewModelScope.launch {
+            runCatching { api.fetchGrades() }
+                .onSuccess { grades ->
+                    _academic.update { state -> state.copy(grades = grades, gradesLoading = false) }
+                }
+                .onFailure { error ->
+                    _academic.update { state ->
+                        state.copy(gradesLoading = false, gradesError = academicErrorText(error))
+                    }
+                }
+        }
+    }
+
+    /**
+     * Room detail: ask the school which of today's five blocks the room is free
+     * in, then add what only the phone knows — your own class in that room.
+     */
+    fun openRoomDetail(room: JwxtFreeRoom) = openRoomDetail(
+        roomName = room.roomName,
+        campus = room.campus,
+        building = room.building,
+        area = room.area,
+        capacity = room.capacity
+    )
+
+    fun openRoomDetail(
+        roomName: String,
+        campus: String = "",
+        building: String = "",
+        area: String = "",
+        capacity: Int = 0
+    ) {
+        val snapshot = _settings.value ?: return
+        _academic.update {
+            it.copy(
+                detail = RoomDetailUiState(
+                    roomName = roomName,
+                    campus = campus,
+                    building = building,
+                    area = area,
+                    capacity = capacity,
+                    loading = true
+                )
+            )
+        }
+        val api = jwxtApi(snapshot) ?: run {
+            _academic.update { state ->
+                state.copy(
+                    detail = state.detail?.copy(
+                        loading = false,
+                        error = "先在「我的 → 教务连接」登录教务"
+                    )
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                val context = api.contextSnapshot()
+                val today = todayAtCampusClock()
+                val weekday = today.dayOfWeek.value
+                val week = weekNumberFor(today, context.currentWeek, today)
+                val slots = coroutineScope {
+                    ROOM_SLOTS.map { slot ->
+                        async {
+                            RoomSlotState(
+                                slot = slot,
+                                free = roomFreeIn(api, context.currentTerm, weekday, week, slot.key, roomName)
+                            )
+                        }
+                    }.map { it.await() }
+                }
+                Pair(slots, week)
+            }.onSuccess { (slots, week) ->
+                val alternatives = _academic.value.rooms
+                    .filter { it.roomName != roomName && (campus.isBlank() || it.campus == campus) }
+                    .distinctBy { it.roomName }
+                    .take(3)
+                    .map { it.roomName }
+                _academic.update { state ->
+                    state.copy(
+                        week = if (week > 0) week else state.week,
+                        detail = state.detail?.copy(
+                            slots = slots,
+                            loading = false,
+                            myCourses = myCoursesInRoom(roomName),
+                            alternatives = alternatives,
+                            error = ""
+                        )
+                    )
+                }
+            }.onFailure { error ->
+                _academic.update { state ->
+                    state.copy(
+                        detail = state.detail?.copy(
+                            loading = false,
+                            error = academicErrorText(error)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun closeRoomDetail() {
+        _academic.update { it.copy(detail = null) }
+    }
+
+    /** true/false from the school's answer, null when that block could not be read. */
+    private suspend fun roomFreeIn(
+        api: LocalJwxtApi,
+        term: String,
+        weekday: Int,
+        week: Int,
+        slotKey: String,
+        roomName: String
+    ): Boolean? {
+        val key = "$weekday|$slotKey|$week"
+        val rooms = roomFreeCache[key] ?: runCatching {
+            readFreeRooms(api, term, weekday, week, slotKey)
+        }.onSuccess { roomFreeCache[key] = it }.getOrNull() ?: return null
+        return isRoomFree(rooms.map { it.roomName }.toSet(), roomName)
+    }
+
+    /** Your own classes in this room today, if the timetable is loaded. */
+    private fun myCoursesInRoom(roomName: String): List<String> {
+        val target = normalizeRoomName(roomName)
+        if (target.isBlank()) return emptyList()
+        val today = todayAtCampusClock()
+        val events = _schedule.value.overview?.days
+            ?.firstOrNull { it.date == today.toString() }
+            ?.events
+            .orEmpty()
+        return events.filter { event ->
+            val location = normalizeRoomName(event.location)
+            location.isNotBlank() && (location.contains(target) || target.contains(location))
+        }.map { "${it.startTime}-${it.endTime} ${it.courseName}" }
+    }
+
+    private fun academicErrorText(error: Throwable): String = when (error) {
+        is LocalJwxtApi.JwxtSessionExpired -> "教务登录已过期，请到「我的 → 教务连接」重新登录。"
+        is LocalJwxtApi.JwxtCaptchaRequired -> "教务需要验证码，请用网页登录一次。"
+        else -> "教务暂时没有响应，稍后再试。"
     }
 
     private fun rebuild(snapshot: AppSettings, weekOverride: Int) {

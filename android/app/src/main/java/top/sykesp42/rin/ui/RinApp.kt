@@ -42,6 +42,7 @@ import top.sykesp42.rin.ui.components.BrandMark
 import top.sykesp42.rin.ui.components.RinBackdrop
 import top.sykesp42.rin.ui.components.RinBottomBar
 import top.sykesp42.rin.ui.components.ThemePickerSheet
+import top.sykesp42.rin.ui.screens.AcademicScreen
 import top.sykesp42.rin.ui.screens.OnboardingScreen
 import top.sykesp42.rin.ui.screens.ScheduleScreen
 import top.sykesp42.rin.ui.screens.SettingsScreen
@@ -53,6 +54,7 @@ import top.sykesp42.rin.ui.theme.ThemeMode
 enum class MainTab(val label: String, @DrawableRes val icon: Int) {
     TODAY("今日", R.drawable.ic_tab_today),
     SCHEDULE("课表", R.drawable.ic_tab_schedule),
+    ACADEMIC("校务", R.drawable.ic_tab_academic),
     ME("我的", R.drawable.ic_tab_me)
 }
 
@@ -93,15 +95,30 @@ private fun MainScaffold(vm: AppViewModel, settings: AppSettings) {
     val density = LocalDensity.current
     val risePx = with(density) { 8.dp.roundToPx() }
     val displayName = Identity.displayName(settings, "R")
-    val tabs = remember { MainTab.entries }
+    // 简洁模式 keeps only 今日 / 课表 / 我的: 校务 is a school-side page and has
+    // nothing to show without a JWXT connection.
+    val tabs = remember(settings.simpleMode) {
+        if (settings.simpleMode) {
+            listOf(MainTab.TODAY, MainTab.SCHEDULE, MainTab.ME)
+        } else {
+            MainTab.entries.toList()
+        }
+    }
 
     fun selectTab(item: MainTab) {
         tab = item
         when (item) {
             MainTab.TODAY -> vm.refreshSchedule()
             MainTab.SCHEDULE -> vm.refreshSchedule()
+            MainTab.ACADEMIC -> vm.openAcademic()
             MainTab.ME -> Unit
         }
+    }
+
+    // Switching to 简洁模式 while standing on 校务 would leave an invisible tab
+    // selected; fall back to 今日.
+    LaunchedEffect(settings.simpleMode) {
+        if (settings.simpleMode && tab == MainTab.ACADEMIC) tab = MainTab.TODAY
     }
 
     BackHandler(enabled = tab != MainTab.TODAY) { selectTab(MainTab.TODAY) }
@@ -165,6 +182,13 @@ private fun MainScaffold(vm: AppViewModel, settings: AppSettings) {
                         avatarText = displayName,
                         onToggleTheme = { themePickerOpen = true },
                         onGoToday = { selectTab(MainTab.TODAY) },
+                        onOpenSettings = { selectTab(MainTab.ME) }
+                    )
+                    MainTab.ACADEMIC -> AcademicScreen(
+                        vm = vm,
+                        themeMode = themeMode,
+                        avatarText = displayName,
+                        onToggleTheme = { themePickerOpen = true },
                         onOpenSettings = { selectTab(MainTab.ME) }
                     )
                     MainTab.ME -> SettingsScreen(

@@ -352,25 +352,41 @@ class LocalJwxtApi(
      */
     suspend fun fetchFreeClassrooms(weekday: Int, week: Int, sections: String): List<JwxtFreeRoom> =
         withContext(Dispatchers.IO) {
-            val query = buildString {
-                append("?primarySort=jxcddm%20desc&page=1&rows=200")
-                append("&xnxqdm=").append(fetchContext().currentTerm)
-                append("&xq=").append(freeRoomApiWeekday(weekday))
-                append("&zc=").append(week)
-                if (sections.isNotBlank()) append("&jc=").append(urlEncodeSections(sections))
-            }
-            val body = get("$baseUrl/teajssqxx!getPlJsDataList.action$query")
-            parseClassroomPage(body).rooms.map { row ->
-                JwxtFreeRoom(
-                    roomCode = row.code,
-                    roomName = row.name,
-                    campus = row.campus,
-                    building = row.building,
-                    capacity = row.capacity,
-                    area = row.area
-                )
-            }.sortedWith(compareBy({ it.campus }, { it.building }, { it.roomName }))
+            freeRoomsIn(fetchContext().currentTerm, weekday, week, sections)
         }
+
+    /**
+     * Free rooms for an already-resolved term. The room helper queries several
+     * section pairs in a row, so the term comes from the caller's single
+     * [contextSnapshot] read instead of one context round-trip per slot.
+     */
+    suspend fun freeRoomsIn(
+        term: String,
+        weekday: Int,
+        week: Int,
+        sections: String
+    ): List<JwxtFreeRoom> = withContext(Dispatchers.IO) {
+        val query = buildString {
+            append("?primarySort=jxcddm%20desc&page=1&rows=500")
+            append("&xnxqdm=").append(term)
+            append("&xq=").append(freeRoomApiWeekday(weekday))
+            append("&zc=").append(week)
+            if (sections.isNotBlank()) append("&jc=").append(urlEncodeSections(sections))
+        }
+        parseClassroomPage(get("$baseUrl/teajssqxx!getPlJsDataList.action$query")).rooms.map { row ->
+            JwxtFreeRoom(
+                roomCode = row.code,
+                roomName = row.name,
+                campus = row.campus,
+                building = row.building,
+                capacity = row.capacity,
+                area = row.area
+            )
+        }.sortedWith(compareBy({ it.campus }, { it.building }, { it.roomName }))
+    }
+
+    /** One timetable context read, shared by the room helper's slot queries. */
+    suspend fun contextSnapshot(): JwxtContext = withContext(Dispatchers.IO) { fetchContext() }
 
     /**
      * Classroom catalog: current-week free-room rows supply verified four-digit
