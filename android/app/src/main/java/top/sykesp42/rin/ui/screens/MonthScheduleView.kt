@@ -38,7 +38,9 @@ import top.sykesp42.rin.data.ManualDayMark
 import top.sykesp42.rin.data.ManualPayload
 import top.sykesp42.rin.data.buildWeekOverview
 import top.sykesp42.rin.data.termStartDate
+import top.sykesp42.rin.ui.schedule.coursesOnDate
 import top.sykesp42.rin.ui.schedule.nowMinutesAt
+import top.sykesp42.rin.ui.schedule.weekNumberFor
 import top.sykesp42.rin.ui.theme.LocalRinColors
 
 @Composable
@@ -48,7 +50,9 @@ internal fun MonthScheduleView(
     today: LocalDate,
     onBack: () -> Unit,
     onPickDate: (LocalDate) -> Unit,
-    jwxt: top.sykesp42.rin.data.ApiScheduleOverview? = null
+    jwxt: top.sykesp42.rin.data.ApiScheduleOverview? = null,
+    termCourses: List<top.sykesp42.rin.data.JwxtTermCourse> = emptyList(),
+    currentWeek: Int = 0
 ) {
     val colors = LocalRinColors.current
     var month by remember { mutableStateOf(YearMonth.from(today)) }
@@ -57,17 +61,33 @@ internal fun MonthScheduleView(
     val jwxtByDate = remember(jwxt) {
         jwxt?.days?.associateBy { it.date }.orEmpty()
     }
-    val eventsByDate = remember(month, payload, settings, jwxtByDate) {
+    // The school timetable only covers the loaded week; the term-course list
+    // (one read per term) covers every date, so the month grid stays honest
+    // across the whole month instead of going dark after Sunday.
+    val eventsByDate = remember(month, payload, settings, jwxtByDate, termCourses, currentWeek) {
         val result = linkedMapOf<LocalDate, List<ApiScheduleEvent>>()
         var date = month.atDay(1)
         while (date.month == month.month) {
             val fromJwxt = jwxtByDate[date.toString()]?.events
-            if (fromJwxt != null) {
-                result[date] = fromJwxt
-            } else {
-                val week = weekFor(date, settings)
-                val overview = buildWeekOverview(payload, settings, week, date, nowMinutesAt())
-                result[date] = overview.days.firstOrNull { it.date == date.toString() }?.events.orEmpty()
+            result[date] = when {
+                fromJwxt != null -> fromJwxt
+                termCourses.isNotEmpty() -> {
+                    val week = weekNumberFor(date, currentWeek, today)
+                    coursesOnDate(termCourses, date.dayOfWeek.value, week).map { course ->
+                        ApiScheduleEvent(
+                            courseName = course.courseName,
+                            location = course.location,
+                            sectionText = course.sectionText,
+                            startTime = "",
+                            endTime = ""
+                        )
+                    }
+                }
+                else -> {
+                    val week = weekFor(date, settings)
+                    val overview = buildWeekOverview(payload, settings, week, date, nowMinutesAt())
+                    overview.days.firstOrNull { it.date == date.toString() }?.events.orEmpty()
+                }
             }
             date = date.plusDays(1)
         }

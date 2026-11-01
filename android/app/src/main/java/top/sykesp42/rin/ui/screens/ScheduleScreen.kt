@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.LocalDate
+import top.sykesp42.rin.data.ApiScheduleEvent
 import top.sykesp42.rin.data.AppSettings
 import top.sykesp42.rin.data.ManualPayload
 import top.sykesp42.rin.data.buildWeekOverview
@@ -37,7 +39,9 @@ import top.sykesp42.rin.ui.schedule.ExportPalette
 import top.sykesp42.rin.ui.schedule.ShareFormat
 import top.sykesp42.rin.ui.schedule.ShareStyle
 import top.sykesp42.rin.ui.schedule.buildSemesterReport
+import top.sykesp42.rin.ui.schedule.coursesOnDate
 import top.sykesp42.rin.ui.schedule.nowMinutesAt
+import top.sykesp42.rin.ui.schedule.weekNumberFor
 import top.sykesp42.rin.ui.schedule.semesterSlots
 import top.sykesp42.rin.ui.schedule.todayAtCampusClock
 import top.sykesp42.rin.ui.theme.LocalRinColors
@@ -55,6 +59,7 @@ fun ScheduleScreen(
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val schedule by vm.schedule.collectAsStateWithLifecycle()
+    val academic by vm.academic.collectAsStateWithLifecycle()
     val manual by vm.manualSchedule.payload.collectAsStateWithLifecycle()
     val detail by vm.courseDetail.collectAsStateWithLifecycle()
     val appSettings = settings ?: AppSettings()
@@ -181,8 +186,35 @@ fun ScheduleScreen(
                 }
             }
             if (viewMode == ScheduleViewMode.DAY) {
+                // The loaded overview only carries its own week. For a day
+                // outside it, derive that day's classes from the term courses
+                // so the day view stays useful across the whole month.
+                val dayViewDays = if (
+                    overview.days.any { it.date == selectedDate.toString() } ||
+                    academic.termCourses.isEmpty()
+                ) {
+                    overview.days
+                } else {
+                    val week = weekNumberFor(selectedDate, schedule.currentWeek, today)
+                    val events = coursesOnDate(
+                        academic.termCourses,
+                        selectedDate.dayOfWeek.value,
+                        week
+                    ).map { course ->
+                        ApiScheduleEvent(
+                            courseName = course.courseName,
+                            location = course.location,
+                            sectionText = course.sectionText
+                        )
+                    }
+                    overview.days + top.sykesp42.rin.data.ApiScheduleDay(
+                        date = selectedDate.toString(),
+                        weekday = selectedDate.dayOfWeek.value,
+                        events = events
+                    )
+                }
                 DayScheduleView(
-                    days = overview.days,
+                    days = dayViewDays,
                     selectedDate = selectedDate,
                     today = today,
                     mark = "",
@@ -192,6 +224,7 @@ fun ScheduleScreen(
                     onCourseTap = { event -> vm.openCourseDetail(event) }
                 )
             } else if (viewMode == ScheduleViewMode.MONTH) {
+                LaunchedEffect(Unit) { vm.ensureTermCourses() }
                 MonthScheduleView(
                     payload = manual,
                     settings = appSettings,
@@ -201,7 +234,9 @@ fun ScheduleScreen(
                         selectedDate = date
                         viewMode = ScheduleViewMode.DAY
                     },
-                    jwxt = schedule.overview
+                    jwxt = schedule.overview,
+                    termCourses = academic.termCourses,
+                    currentWeek = schedule.currentWeek
                 )
             } else {
             Box(Modifier.weight(1f).fillMaxWidth()) {

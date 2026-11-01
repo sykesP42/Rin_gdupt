@@ -441,8 +441,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         if (state.days.isEmpty() && !state.loading && state.error.isBlank()) {
             loadCalendar()
         }
-        // The calendar's day sheet lists that day's classes, which come from the
-        // term timetable rather than the current week.
+        ensureTermCourses()
+    }
+
+    /** The month grid and the calendar day sheet both need the term timetable. */
+    fun ensureTermCourses() {
         val academic = _academic.value
         if (academic.termCourses.isEmpty() &&
             !academic.termCoursesLoading &&
