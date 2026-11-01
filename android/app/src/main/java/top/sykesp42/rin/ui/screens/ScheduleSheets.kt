@@ -60,6 +60,7 @@ fun CourseDetailSheet(
     override: top.sykesp42.rin.data.CourseOverride = top.sykesp42.rin.data.CourseOverride(),
     onOverride: (String, Int) -> Unit = { _, _ -> },
     onDismiss: () -> Unit,
+    onMonitor: (String) -> Unit,
     onOpenFreeRooms: (Int, String) -> Unit,
     checklist: List<ChecklistItem> = emptyList(),
     onSaveChecklist: (String, List<ChecklistItem>) -> Unit = { _, _ -> },
@@ -67,6 +68,7 @@ fun CourseDetailSheet(
     reminders: List<CourseReminder> = emptyList(),
     onSaveReminder: (CourseReminder, ReminderPrefs) -> Boolean = { _, _ -> false },
     onDeleteReminder: (String) -> Unit = {},
+    signAccessEnabled: Boolean = true
 ) {
     if (detail.courseName.isBlank()) return
     val colors = LocalSuiSignColors.current
@@ -314,6 +316,79 @@ fun CourseDetailSheet(
             )
         }
         if (moreOpen) {
+        if (signAccessEnabled) {
+        if (roomCode.isNotBlank()) {
+            Hairline()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "考勤码 $roomCode",
+                        color = colors.text,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Text(
+                        text = "只切换本机监控对象",
+                        color = colors.textSecondary,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                SuiSecondaryButton(
+                    text = "设为监控目标",
+                    onClick = { onMonitor(roomCode) }
+                )
+            }
+        } else {
+            // No verified code: let the user enter the four digits printed in
+            // the room. useRoom() learns the mapping, so this class is
+            // recognised automatically next time.
+            var codeInput by remember(detail.courseName) { mutableStateOf("") }
+            Hairline()
+            Column(modifier = Modifier.padding(top = 10.dp)) {
+                Text(
+                    text = "考勤码",
+                    color = colors.text,
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Text(
+                    text = if (location.isNotBlank()) {
+                        "$location 缺四位码，输入一次即可"
+                    } else {
+                        "输入教室四位码"
+                    },
+                    color = colors.textSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = codeInput,
+                        onValueChange = { raw -> codeInput = raw.filter(Char::isDigit).take(4) },
+                        placeholder = { Text("四位码") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        colors = suiTextFieldColors(),
+                        modifier = Modifier.weight(1f)
+                    )
+                    SuiPrimaryButton(
+                        text = "开始监控",
+                        onClick = { onMonitor(codeInput) },
+                        enabled = codeInput.length == 4
+                    )
+                }
+            }
+        }
+        }
+
         if (detail.freeRoomDay in 1..7 && detail.freeRoomSections.isNotBlank()) {
             SuiSecondaryButton(
                 text = "查该课时段空教室",
@@ -403,3 +478,100 @@ fun CourseDetailSheet(
     }
 }
 
+/**
+ * Manual room entry as a sheet. Validation is unchanged: digits only, four
+ * characters, and the monitor action is enabled only at that length.
+ */
+@Composable
+fun ManualRoomSheet(
+    input: String,
+    onInputChange: (String) -> Unit,
+    manualCode: String,
+    onMonitor: () -> Unit,
+    onClearManual: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = LocalSuiSignColors.current
+    RinSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "手动教室码",
+                    color = colors.text,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text("关闭", color = colors.text, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            Hairline()
+            Text(
+                text = "临时换教室时用",
+                color = colors.textSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 12.dp, bottom = 10.dp)
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { value -> onInputChange(value.filter { it.isDigit() }.take(4)) },
+                    label = { Text("教室码") },
+                    placeholder = { Text("4 位数字") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = suiTextFieldColors(),
+                    modifier = Modifier.weight(1f)
+                )
+                SuiPrimaryButton(
+                    text = "监控",
+                    onClick = onMonitor,
+                    enabled = input.length == 4
+                )
+            }
+            if (manualCode.isNotBlank()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(colors.signal)
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        text = "当前手动教室 $manualCode",
+                        color = colors.text,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = onClearManual,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text("恢复自动", color = colors.text, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+    }
+}

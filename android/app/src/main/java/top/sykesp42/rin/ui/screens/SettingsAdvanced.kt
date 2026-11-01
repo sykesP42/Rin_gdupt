@@ -48,6 +48,8 @@ import top.sykesp42.rin.data.AppSettings
 import top.sykesp42.rin.data.JwxtStudentInfo
 import top.sykesp42.rin.jwxt.JwxtLoginActivity
 import top.sykesp42.rin.ui.AppViewModel
+import top.sykesp42.rin.ui.CalibrationUiState
+import top.sykesp42.rin.ui.SettingsUiState
 import top.sykesp42.rin.ui.components.Hairline
 import top.sykesp42.rin.ui.components.PermissionRow
 import top.sykesp42.rin.ui.components.SectionHeader
@@ -64,6 +66,7 @@ import top.sykesp42.rin.ui.theme.LocalSuiSignColors
  */
 @Stable
 class SettingsAdvancedDrafts {
+    var threshold by mutableIntStateOf(10)
     var rosterName by mutableStateOf("")
     var jwxtAccount by mutableStateOf("")
     var jwxtPassword by mutableStateOf("")
@@ -73,23 +76,31 @@ class SettingsAdvancedDrafts {
 fun rememberSettingsAdvancedDrafts(): SettingsAdvancedDrafts = remember { SettingsAdvancedDrafts() }
 
 /**
- * Spec 4.5: 数据来源、教务连接 and the keep-alive group sit behind one
- * default-collapsed row. The sign-side groups (自动签到/阈值/诊断) do not exist
- * in this build.
+ * Spec 4.5: 自动签到、安全阈值、本地/云端、教务连接 and 诊断 sit behind one
+ * default-collapsed row. Nothing was deleted — expanding reveals exactly the controls
+ * the old card wall showed, with the same ViewModel callbacks, launchers and dialogs
+ * (the dialogs themselves stay owned by `SettingsScreen`).
  */
 @Composable
 fun SettingsAdvanced(
     vm: AppViewModel,
     settings: AppSettings,
+    settingsPage: SettingsUiState,
     drafts: SettingsAdvancedDrafts,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
+    autoServiceConnected: Boolean,
+    onAutoSignChange: (Boolean) -> Unit,
+    onOpenAccessibility: () -> Unit,
+    onSaveThreshold: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val calibration by vm.calibration.collectAsStateWithLifecycle()
+
     Column(modifier.fillMaxWidth()) {
         AdvancedToggleRow(
             expanded = expanded,
-            summary = advancedSummary(settings),
+            summary = advancedSummary(settings, settingsPage),
             onToggle = onToggleExpanded
         )
         if (expanded) {
@@ -98,7 +109,23 @@ fun SettingsAdvanced(
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 DataSourceGroup(vm = vm, settings = settings, drafts = drafts)
+                AutoSignGroup(
+                    settings = settings,
+                    settingsPage = settingsPage,
+                    drafts = drafts,
+                    autoServiceConnected = autoServiceConnected,
+                    onAutoSignChange = onAutoSignChange,
+                    onOpenAccessibility = onOpenAccessibility,
+                    onSaveThreshold = onSaveThreshold,
+                    onLoadThreshold = vm::loadThreshold,
+                    onSaveLocalThreshold = vm::setLocalThreshold
+                )
                 ReliabilityGroup()
+                DiagnosticsGroup(
+                    vm = vm,
+                    autoServiceConnected = autoServiceConnected,
+                    calibration = calibration
+                )
             }
         }
     }
@@ -110,13 +137,30 @@ fun SettingsAdvanced(
  * value when a read fails, so printing it unconditionally would advertise a number the
  * server never confirmed. Internal (not private) so the branches stay unit-testable.
  */
-internal fun advancedSummary(settings: AppSettings): String =
+internal fun advancedSummary(settings: AppSettings, settingsPage: SettingsUiState): String =
     listOf(
-        settings.localMode.takeIf { it }?.let { "本地模式" } ?: "云端预留",
-        "教务 " + if (settings.jwxtConnectedAt.isNotBlank()) "已连接" else "未连接",
-        "本地优先"
-    ).filterNotNull().joinToString(" · ")
+        if (settings.autoSignEnabled) "自动签到 已开" else "自动签到 未开",
+        if (settings.localMode) "本地模式" else "云端模式",
+        when {
+            settings.jwxtNeedsLogin -> "教务 需重连"
+            settings.jwxtConnectedAt.isNotBlank() -> "教务 已连接"
+            else -> "教务 未连接"
+        },
+        if (settings.localMode) {
+            if (settings.localThreshold > 0) "安全线 ${settings.localThreshold} 人（本机）" else "安全线已关（本机）"
+        } else {
+            thresholdSummary(settingsPage)
+        }
+    ).joinToString(" · ")
 
+/** Threshold segment of [advancedSummary]: loading, failed and confirmed read. */
+internal fun thresholdSummary(page: SettingsUiState): String = when {
+    page.thresholdLoading -> "安全线读取中"
+    page.thresholdError.isNotBlank() -> "安全线读取失败"
+    else -> "安全线 ${page.threshold} 人"
+}
+
+/** The single expandable row: title, 48dp target, summary line and hairline. */
 @Composable
 private fun AdvancedToggleRow(
     expanded: Boolean,
@@ -171,6 +215,169 @@ private fun AdvancedToggleRow(
     }
 }
 
+/** 自动签到: experimental switch, accessibility launcher, threshold block and safety copy. */
+@Composable
+internal fun AutoSignGroup(
+    settings: AppSettings,
+    settingsPage: SettingsUiState,
+    drafts: SettingsAdvancedDrafts,
+    autoServiceConnected: Boolean,
+    onAutoSignChange: (Boolean) -> Unit,
+    onOpenAccessibility: () -> Unit,
+    onSaveThreshold: (Int) -> Unit,
+    onLoadThreshold: () -> Unit,
+    onSaveLocalThreshold: (Int) -> Unit
+) {
+    val colors = LocalSuiSignColors.current
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SectionHeader(
+            title = "自动签到",
+            meta = if (settings.autoSignEnabled) "已开启" else "未开启"
+        )
+        PaperSwitchRow(
+            title = "自动签到（实验）",
+            description = "到安全线后用本机企微扫码",
+            checked = settings.autoSignEnabled,
+            onCheckedChange = onAutoSignChange,
+            contentDescription = "自动签到"
+        )
+        PermissionRow(
+            title = "无障碍服务",
+            description = "只处理本 App 的扫码流程",
+            granted = autoServiceConnected,
+            actionLabel = "去开启",
+            onAction = onOpenAccessibility
+        )
+        Hairline()
+        ThresholdBlock(
+            settings = settings,
+            settingsPage = settingsPage,
+            draft = drafts.threshold,
+            onDraftChange = { drafts.threshold = it },
+            onSaveThreshold = onSaveThreshold,
+            onLoadThreshold = onLoadThreshold,
+            onSaveLocalThreshold = onSaveLocalThreshold
+        )
+        Text(
+            text = "亮屏解锁时自动执行；锁屏时先提醒，解锁后继续。失败退回手动签到。" +
+                "仅限本人账号；自动化有风控风险，需自行评估。",
+            color = colors.textSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+/** Same draft/save behaviour as the old card: slider edits a draft, save is gated on a change. */
+@Composable
+private fun ThresholdBlock(
+    settings: AppSettings,
+    settingsPage: SettingsUiState,
+    draft: Int,
+    onDraftChange: (Int) -> Unit,
+    onSaveThreshold: (Int) -> Unit,
+    onLoadThreshold: () -> Unit,
+    onSaveLocalThreshold: (Int) -> Unit
+) {
+    val colors = LocalSuiSignColors.current
+    val localMode = settings.localMode
+    // The threshold that actually gates local monitoring is localThreshold;
+    // the cloud value behind settingsPage never touches the local pipeline.
+    val effective = if (localMode) settings.localThreshold else settingsPage.threshold
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        SectionHeader(
+            title = "安全线人数",
+            meta = if (localMode) "本机" else "云端"
+        )
+        if (!localMode && settingsPage.thresholdLoading) {
+            Row(
+                modifier = Modifier.heightIn(min = 24.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ThresholdDot(color = colors.signal)
+                Text(
+                    text = "正在读取设置…",
+                    color = colors.text,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        } else {
+            val min = if (localMode) 0 else settingsPage.minThreshold.coerceAtLeast(0)
+            val max = if (localMode) 30 else settingsPage.maxThreshold.coerceAtLeast(min + 1)
+            val shownDraft = if (localMode) effective else draft
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    text = "$shownDraft",
+                    style = MaterialTheme.typography.displayMedium,
+                    color = colors.text
+                )
+                Text(
+                    text = "人",
+                    color = colors.textSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                )
+            }
+            StatusNote(
+                text = if (shownDraft == 0) "0 人：关闭自动跳转" else "没到阈值只提醒",
+                dotColor = if (shownDraft == 0) colors.warning else colors.textSecondary
+            )
+            Slider(
+                value = shownDraft.toFloat(),
+                onValueChange = { value ->
+                    if (localMode) onSaveLocalThreshold(value.roundToInt()) else onDraftChange(value.roundToInt())
+                },
+                valueRange = min.toFloat()..max.toFloat(),
+                steps = 0,
+                colors = SliderDefaults.colors(
+                    thumbColor = colors.signal,
+                    activeTrackColor = colors.signal,
+                    inactiveTrackColor = colors.text.copy(alpha = 0.1f),
+                    activeTickColor = Color.Transparent,
+                    inactiveTickColor = Color.Transparent
+                )
+            )
+            Text(
+                text = if (localMode) {
+                    "本地监控用它判定阈值"
+                } else {
+                    "已保存 ${settingsPage.threshold} 人，同步服务端"
+                },
+                color = colors.textSecondary,
+                style = MaterialTheme.typography.labelSmall
+            )
+            if (!localMode && settingsPage.thresholdError.isNotBlank()) {
+                AdvancedWarning(settingsPage.thresholdError)
+            }
+            if (!localMode) {
+                // Cloud value needs an explicit save + re-read; the local one
+                // applies on release with nothing to sync.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SuiPrimaryButton(
+                        text = "保存安全线",
+                        onClick = { onSaveThreshold(draft) },
+                        loading = settingsPage.savingThreshold,
+                        enabled = draft != settingsPage.threshold || settingsPage.thresholdError.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    )
+                    SuiSecondaryButton(
+                        text = "重新读取",
+                        onClick = onLoadThreshold,
+                        enabled = !settingsPage.savingThreshold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 数据来源: cloud/local switch, roster matching name and the local-mode 教务连接 block. */
 @Composable
 internal fun DataSourceGroup(
     vm: AppViewModel,
@@ -189,18 +396,49 @@ internal fun DataSourceGroup(
     ) {
         SectionHeader(
             title = "数据来源",
-            meta = "本地直连学校"
+            meta = if (settings.localMode) "本地直连" else "云端服务"
         )
-        Hairline()
-        JwxtGroup(
-            vm = vm,
-            container = container,
-            scope = scope,
-            context = context,
-            settings = settings,
-            drafts = drafts,
-            student = grades.student
+        PaperSwitchRow(
+            title = "本地模式",
+            description = if (settings.localMode) {
+                "直连学校接口，不依赖服务端" +
+                    if (settings.rosterName.isBlank()) "；要先填名单姓名" else ""
+            } else {
+                "开启后手机直接连学校，不经服务端"
+            },
+            checked = settings.localMode,
+            onCheckedChange = { next -> vm.setLocalMode(next) },
+            contentDescription = "本地模式"
         )
+        if (settings.localMode) {
+            OutlinedTextField(
+                value = drafts.rosterName,
+                onValueChange = { drafts.rosterName = it },
+                label = { Text("名单姓名") },
+                supportingText = { Text("需与名单完全一致") },
+                singleLine = true,
+                colors = suiTextFieldColors(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SuiPrimaryButton(
+                    text = "保存姓名",
+                    onClick = { vm.setRosterName(drafts.rosterName) },
+                    enabled = drafts.rosterName != settings.rosterName,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Hairline()
+            JwxtGroup(
+                vm = vm,
+                container = container,
+                scope = scope,
+                context = context,
+                settings = settings,
+                drafts = drafts,
+                student = grades.student
+            )
+        }
     }
 }
 
@@ -308,7 +546,7 @@ private fun JwxtGroup(
             )
         }
         Text(
-            text = "手机直连学校教务，数据不出本机。",
+            text = "手机直连教务，不绕过签到权限。",
             color = colors.textSecondary,
             style = MaterialTheme.typography.labelSmall
         )
@@ -333,6 +571,11 @@ private fun JwxtGroup(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+            SuiSecondaryButton(
+                text = "用此姓名填名单匹配",
+                onClick = { vm.fillRosterNameFromJwxt() },
+                modifier = Modifier.fillMaxWidth()
+            )
         }
         Text(
             text = "校外先登录 webvpn2.gdupt.edu.cn，滑块验证需人工完成。",
@@ -488,6 +731,44 @@ private fun openAutoStartSettings(context: Context) {
     }
 }
 
+/** 诊断: the WeChat chain rehearsal, its copy and the result line. */
+@Composable
+internal fun DiagnosticsGroup(
+    vm: AppViewModel,
+    autoServiceConnected: Boolean,
+    calibration: CalibrationUiState
+) {
+    val colors = LocalSuiSignColors.current
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SectionHeader(
+            title = "诊断",
+            meta = if (autoServiceConnected) "服务已就绪" else "需无障碍"
+        )
+        SuiSecondaryButton(
+            text = if (calibration is CalibrationUiState.Running) "演练中…" else "演练校准",
+            onClick = { vm.runCalibration() },
+            enabled = autoServiceConnected && calibration !is CalibrationUiState.Running,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            text = "走一遍企微链路，验证当前版本是否兼容。",
+            color = colors.textSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
+        when (val result = calibration) {
+            is CalibrationUiState.Done -> StatusNote(
+                text = result.text,
+                dotColor = if (result.ok) colors.signal else colors.warning
+            )
+            else -> Unit
+        }
+    }
+}
+
+/** Threshold saving is a network write; the error stays one hairline-terminated stripe. */
 @Composable
 private fun AdvancedWarning(message: String) {
     val colors = LocalSuiSignColors.current

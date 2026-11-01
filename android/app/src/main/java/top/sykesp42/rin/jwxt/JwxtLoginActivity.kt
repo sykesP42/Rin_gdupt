@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
 import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.LocalJwxtApi
 import top.sykesp42.rin.data.SessionCookie
+import top.sykesp42.rin.data.WaAttendanceApi
 
 /**
  * Embedded JWXT login, styled after the app's dark design tokens.
@@ -294,9 +295,46 @@ class JwxtLoginActivity : Activity() {
                 }
                 return@evaluateJavascript
             }
+            persistWaToken(token)
         }
     }
 
+    private fun persistWaToken(token: String) {
+        if (verifying) return
+        verifying = true
+        connectButton.isEnabled = false
+        connectButton.text = "验证考勤会话…"
+        val container = AppContainer.get(this)
+        scope.launch {
+            val api = container.waAttendance
+            val userId = withContext(Dispatchers.IO) { api.decodeUserId(token) }
+            val session = WaAttendanceApi.Session(userId = userId, token = token)
+            val ok = withContext(Dispatchers.IO) { api.verify(session) }
+            if (ok) {
+                container.waSessionStore.save(SessionCookie(name = userId, value = token))
+                val probe = withContext(Dispatchers.IO) { api.probeAbsence(session) }
+                trace("wa connected user=$userId probe=$probe")
+                Toast.makeText(this@JwxtLoginActivity, "考勤系统已连接", Toast.LENGTH_SHORT).show()
+                finish()
+            } else {
+                trace("wa verify failed")
+                verifying = false
+                connectButton.isEnabled = true
+                connectButton.text = "连接考勤系统"
+                Toast.makeText(
+                    this@JwxtLoginActivity,
+                    "考勤会话验证失败，确认页面已登录",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    /**
+     * Fill the school login form from the Keystore-encrypted pair, so the
+     * password never passes through adb, logs or the clipboard. The page's own
+     * submit handler still encrypts it; the user still solves any slider.
+     */
     private fun maybeAutofill(url: String) {
         if (autofilled) return
         // The WebVPN-wrapped URL often has no "login" in it; try every page
@@ -451,6 +489,7 @@ class JwxtLoginActivity : Activity() {
         runCatching { container.settings.setJwxtConnectedAt(Instant.now().toString()) }
         runCatching { container.settings.setJwxtNeedsLogin(false) }
         container.noteJwxtHealthy()
+        runCatching { top.sykesp42.rin.monitor.SessionKeeper.poke(this) }
         // Debug builds discover the student attendance page with this fresh
         // cookie; release builds have no receiver for the action.
         runCatching {

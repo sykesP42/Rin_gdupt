@@ -17,10 +17,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import top.sykesp42.rin.auto.CalibrationRunner
 import top.sykesp42.rin.data.ApiClient
 import top.sykesp42.rin.data.ApiError
 import top.sykesp42.rin.data.MonitorApi
@@ -29,18 +31,35 @@ import top.sykesp42.rin.data.ApiScheduleOverview
 import top.sykesp42.rin.data.CampusNewsItem
 import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.AppSettings
+import top.sykesp42.rin.data.InternalGate
 import top.sykesp42.rin.data.HistoryEvent
 import top.sykesp42.rin.data.HistoryKind
 import top.sykesp42.rin.data.JwxtCalendar
 import top.sykesp42.rin.data.JwxtClassroom
+import top.sykesp42.rin.data.LicenseApiException
+import top.sykesp42.rin.data.collectLicenseDeviceInfo
 import top.sykesp42.rin.data.PetWeatherSnapshot
+import top.sykesp42.rin.data.RosterSnapshot
 import top.sykesp42.rin.data.appVersionName
 import top.sykesp42.rin.data.TodayScheduleSnapshot
 import top.sykesp42.rin.ui.schedule.diffSchedule
+import top.sykesp42.rin.data.suggestClassroomCodes
+import top.sykesp42.rin.data.verifiedRoomCode
 import top.sykesp42.rin.data.User
+import top.sykesp42.rin.monitor.MonitorEngine
+import top.sykesp42.rin.handoff.HandoffRuntime
+import top.sykesp42.rin.monitor.MonitorRuntime
+import top.sykesp42.rin.monitor.MonitorService
+import top.sykesp42.rin.monitor.MonitorView
 import top.sykesp42.rin.monitor.NoticeFaces
 import top.sykesp42.rin.monitor.NoticeIcon
 import top.sykesp42.rin.monitor.NoticeSlot
+import top.sykesp42.rin.monitor.REASON_WAKE
+import top.sykesp42.rin.domain.SignAccessApplyOutcome
+import top.sykesp42.rin.domain.SignAccessLevel
+import top.sykesp42.rin.domain.SignAccessState
+import top.sykesp42.rin.domain.signAccessFromCache
+import top.sykesp42.rin.domain.signAccessFromRemote
 import top.sykesp42.rin.ui.theme.ThemeMode
 import top.sykesp42.rin.ui.today.TodayCards
 
@@ -59,9 +78,16 @@ data class LoginUiState(
 data class RoomShortcut(val name: String, val code: String)
 
 data class TodayUiState(
+    val view: MonitorView? = null,
+    val viewReceivedAt: Instant? = null,
+    val cachedRoster: RosterSnapshot? = null,
+    val running: Boolean = false,
+    val stopAt: Instant? = null,
     val loading: Boolean = false,
     val errorCode: String = "",
-    val errorMessage: String = ""
+    val errorMessage: String = "",
+    val manualCode: String = "",
+    val monitorEnabled: Boolean = false
 )
 
 data class ScheduleUiState(
@@ -114,9 +140,36 @@ data class HistoryUiState(
     val loading: Boolean = false
 )
 
+data class SignQrState(
+    val loading: Boolean = false,
+    val png: ByteArray? = null,
+    val fetchedAt: Instant? = null,
+    val type: String = "",
+    val refreshSeconds: Int = 0,
+    val effectiveEnd: Instant? = null,
+    val error: String = ""
+)
 
+data class AttendanceUiState(
+    val records: List<top.sykesp42.rin.data.AttendanceRecord> = emptyList(),
+    val courses: List<top.sykesp42.rin.data.CourseAttendance> = emptyList(),
+    val loaded: Boolean = false
+)
 
+data class SettingsUiState(
+    val threshold: Int = 10,
+    val minThreshold: Int = 0,
+    val maxThreshold: Int = 30,
+    val thresholdLoading: Boolean = false,
+    val savingThreshold: Boolean = false,
+    val thresholdError: String = ""
+)
 
+sealed interface CalibrationUiState {
+    data object Idle : CalibrationUiState
+    data object Running : CalibrationUiState
+    data class Done(val ok: Boolean, val text: String) : CalibrationUiState
+}
 
 data class CourseDetailUiState(
     val courseName: String = "",
@@ -208,27 +261,41 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private val _history = MutableStateFlow(HistoryUiState())
     val history: StateFlow<HistoryUiState> = _history.asStateFlow()
 
+    private val _attendance = MutableStateFlow(AttendanceUiState())
+    val attendance: StateFlow<AttendanceUiState> = _attendance.asStateFlow()
 
+    private val _signQr = MutableStateFlow(SignQrState())
+    val signQr: StateFlow<SignQrState> = _signQr.asStateFlow()
     private var qrJob: Job? = null
 
+    private val _settingsPage = MutableStateFlow(SettingsUiState())
+    val settingsPage: StateFlow<SettingsUiState> = _settingsPage.asStateFlow()
 
     private val _petWeather = MutableStateFlow<PetWeatherSnapshot?>(null)
     val petWeather: StateFlow<PetWeatherSnapshot?> = _petWeather.asStateFlow()
     private var petWeatherJob: Job? = null
 
+    private val _signAccess = MutableStateFlow(SignAccessState())
+    val signAccess: StateFlow<SignAccessState> = _signAccess.asStateFlow()
+    private var signAccessJob: Job? = null
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages = _messages.asSharedFlow()
 
     private val authMutex = Mutex()
+    private var todayJob: Job? = null
     private var searchJob: Job? = null
+    private var thresholdLoaded = false
     private var todayCardPresetChecked = false
+    private var licenseJob: kotlinx.coroutines.Job? = null
+    private var licenseStatusJob: kotlinx.coroutines.Job? = null
 
     init {
         viewModelScope.launch {
             var seenConnectedAt: String? = null
             container.settings.flow.collect { value ->
                 _settings.value = value
+                InternalGate.set(value.internalMode)
                 // Notification builders run outside this scope and need the chosen
                 // outfit synchronously.
                 NoticeFaces.publish(value)
@@ -239,6 +306,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                         viewModelScope.launch { applyTodayCardPreset() }
                     }
                 }
+                _today.update { it.copy(manualCode = value.manualCode, monitorEnabled = value.monitorEnabled) }
                 _classroomCatalog.update { it.copy(selectedCampus = value.selectedCampus) }
                 // First emission = cold start with a stored connection; any later
                 // change = a fresh WebView login. Both are the moment to refresh
@@ -246,7 +314,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 val changed = seenConnectedAt != value.jwxtConnectedAt
                 if (changed) {
                     seenConnectedAt = value.jwxtConnectedAt
-                    if (value.jwxtConnectedAt.isNotBlank() && value.localMode) warmLocalCaches()
+                    if (value.jwxtConnectedAt.isNotBlank() && value.localMode) {
+                        warmLocalCaches()
+                        licenseVerifyIfNeeded()
+                    }
                 }
             }
         }
@@ -255,6 +326,57 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 _favorites.value = it
                 refreshRoomShortcuts()
             }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.view.collect { view ->
+                if (view != null) {
+                    val saved = recordMonitorView(view)
+                    _today.update {
+                        it.copy(
+                            view = view,
+                            viewReceivedAt = Instant.now(),
+                            cachedRoster = saved ?: it.cachedRoster,
+                            loading = false,
+                            errorCode = "",
+                            errorMessage = ""
+                        )
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.running.collect { running ->
+                _today.update { it.copy(running = running) }
+            }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.stopAt.collect { at -> _today.update { it.copy(stopAt = at) } }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.authExpired.collect { expired ->
+                if (expired) expireSession("登录已失效，重新登录")
+            }
+        }
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) {
+                runCatching { container.rosterStore.load() }.getOrNull()
+            }
+            if (cached != null) {
+                _today.update { it.copy(cachedRoster = cached.second) }
+            }
+        }
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) {
+                container.signAccess.read()?.let { (checkedAt, value) ->
+                    signAccessFromCache(
+                        status = value.status,
+                        appliedVersion = value.appliedVersion,
+                        checkedAt = checkedAt,
+                        now = Instant.now()
+                    )
+                }
+            }
+            if (cached != null) _signAccess.value = cached
         }
         restoreSession()
     }
@@ -278,12 +400,16 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 val api = container.client(url) ?: throw IllegalArgumentException("invalid server url")
                 val user = withContext(Dispatchers.IO) { api.login(username.trim(), password) }
                 container.settings.setAccount(user.username, user.displayName)
+                MonitorRuntime.clearAuthExpired()
+                MonitorRuntime.resetView()
                 _today.value = TodayUiState()
                 _schedule.value = ScheduleUiState()
                 _search.value = SearchUiState()
                 _history.value = HistoryUiState()
+                _settingsPage.value = SettingsUiState()
                 _auth.value = AuthState.LoggedIn(user)
                 _login.value = LoginUiState()
+                thresholdLoaded = false
                 runCatching { container.history.append(HistoryKind.LOGIN) }
                 bootstrapData()
             } catch (error: CancellationException) {
@@ -291,6 +417,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             } catch (error: Exception) {
                 _login.value = LoginUiState(error = ErrorCopy.login(error))
             }
+        }
+    }
+
+    fun completeOnboarding() {
+        if (_auth.value !is AuthState.LoggedIn) return
+        viewModelScope.launch {
+            container.settings.setOnboarded(true)
+            _messages.emit("设置完成")
         }
     }
 
@@ -302,13 +436,25 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             }
             container.sessionStore.clear()
             container.settings.resetForLogout()
+            container.controller.logout()
+            withContext(Dispatchers.IO) { container.rosterStore.clear() }
+            withContext(Dispatchers.IO) { container.attendance.clear() }
+            withContext(Dispatchers.IO) { container.scheduleChanges.clear() }
+            _attendance.value = AttendanceUiState()
             runCatching { container.history.append(HistoryKind.LOGOUT) }
+            HandoffRuntime.clear()
+            HandoffRuntime.clearOutcome()
+            container.handoffJournal.clear()
+            MonitorRuntime.clearAuthExpired()
+            MonitorRuntime.resetView()
             _auth.value = AuthState.LoggedOut()
             _login.value = LoginUiState()
             _today.value = TodayUiState()
             _schedule.value = ScheduleUiState()
             _search.value = SearchUiState()
             _history.value = HistoryUiState()
+            _settingsPage.value = SettingsUiState()
+            thresholdLoaded = false
         }
     }
 
@@ -396,6 +542,210 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun notify(text: String) {
         message(text)
+    }
+
+    fun ensureSignAccessLoaded() {
+        refreshSignAccess(
+            force = _signAccess.value.status in setOf(
+                SignAccessLevel.UNKNOWN,
+                SignAccessLevel.PENDING,
+                SignAccessLevel.STALE,
+                SignAccessLevel.ERROR
+            )
+        )
+    }
+
+    fun refreshSignAccess(force: Boolean = false) {
+        if (_auth.value !is AuthState.LoggedIn) return
+        if (signAccessJob?.isActive == true) return
+        val checkedAt = _signAccess.value.verifiedAt
+        if (!force && checkedAt != null &&
+            Duration.between(checkedAt, Instant.now()) < Duration.ofMinutes(5)
+        ) {
+            return
+        }
+        signAccessJob = viewModelScope.launch {
+            val identity = container.licenseIdentity
+            try {
+                val remote = withContext(Dispatchers.IO) {
+                    container.licenseApi.status(
+                        installationId = identity.installationId(),
+                        secret = identity.secret(),
+                        device = collectLicenseDeviceInfo(container.appContext)
+                    )
+                }
+                val now = Instant.now()
+                withContext(Dispatchers.IO) { container.signAccess.write(remote) }
+                applySignAccessState(
+                    signAccessFromRemote(remote.status, remote.appliedVersion, now),
+                    definitive = true
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: LicenseApiException) {
+                if (error.code == "LICENSE_UNAUTHORIZED") {
+                    withContext(Dispatchers.IO) { container.signAccess.clear() }
+                    _signAccess.value = SignAccessState(status = SignAccessLevel.NONE)
+                } else {
+                    applySignAccessState(cachedSignAccessState(), definitive = false)
+                }
+            } catch (error: Exception) {
+                applySignAccessState(cachedSignAccessState(), definitive = false)
+            }
+        }
+    }
+
+    suspend fun applySignAccess(code: String): SignAccessApplyOutcome {
+        val identity = container.licenseIdentity
+        val label = container.settings.current().profileName.ifBlank { "Rin Android" }
+        return try {
+            val remote = withContext(Dispatchers.IO) {
+                container.licenseApi.apply(
+                    code = code,
+                    installationId = identity.installationId(),
+                    appVersion = appVersionName(container.appContext),
+                    label = label,
+                    device = collectLicenseDeviceInfo(container.appContext)
+                )
+            }
+            remote.secret?.takeIf { it.isNotBlank() }?.let(identity::saveSecret)
+            val now = Instant.now()
+            withContext(Dispatchers.IO) { container.signAccess.write(remote) }
+            val state = signAccessFromRemote(remote.status, remote.appliedVersion, now)
+            applySignAccessState(state, definitive = true)
+            SignAccessApplyOutcome.Applied(state)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: LicenseApiException) {
+            val code = when (error.code) {
+                "TOKEN_INVALID" -> "SIGN_ACCESS_INVALID"
+                "VERSION_MISMATCH" -> "SIGN_ACCESS_VERSION"
+                "REAPPLY_BLOCKED" -> "SIGN_ACCESS_CLOSED"
+                "LICENSE_UNAUTHORIZED" -> "AUTH_REQUIRED"
+                else -> error.code
+            }
+            SignAccessApplyOutcome.Failed(code)
+        } catch (error: Exception) {
+            SignAccessApplyOutcome.Failed("LINK_DOWN")
+        }
+    }
+
+    fun onSignAccessDenied() {
+        _signAccess.value = _signAccess.value.copy(
+            status = SignAccessLevel.STALE,
+            error = "server"
+        )
+        viewModelScope.launch {
+            if (container.settings.current().autoSignEnabled) {
+                container.settings.setAutoSignEnabled(false)
+            }
+        }
+        refreshSignAccess(force = true)
+    }
+
+    private suspend fun cachedSignAccessState(): SignAccessState =
+        withContext(Dispatchers.IO) { container.signAccess.current() }
+
+    private suspend fun applySignAccessState(state: SignAccessState, definitive: Boolean) {
+        _signAccess.value = state
+        if (definitive && !state.proEnabled && container.settings.current().autoSignEnabled) {
+            container.settings.setAutoSignEnabled(false)
+        }
+    }
+
+    fun ensureTodayLoaded() {
+        // The today poll is a sign-surface concept; the clean tab never runs it.
+        if (!InternalGate.isOn) return
+        if (_auth.value !is AuthState.LoggedIn) return
+        val state = _today.value
+        if (state.running) return
+        val stale = state.viewReceivedAt?.let { Duration.between(it, Instant.now()) > FRESH_FOR } ?: true
+        if (state.view == null || stale) fetchTodayOnce()
+    }
+
+    fun refreshToday() {
+        if (!InternalGate.isOn) {
+            loadSchedule()
+            return
+        }
+        if (_auth.value !is AuthState.LoggedIn) return
+        if (MonitorRuntime.running.value) {
+            MonitorService.start(container.appContext, REASON_WAKE)
+            message("已请求刷新")
+        } else {
+            fetchTodayOnce(force = true)
+        }
+    }
+
+    fun enableMonitoring() {
+        if (_auth.value !is AuthState.LoggedIn) {
+            message("登录后再开启")
+            return
+        }
+        viewModelScope.launch {
+            if (!container.notifications.canPost()) {
+                _messages.emit("通知权限没开，收不到签到提醒")
+                return@launch
+            }
+            val result = container.controller.enable()
+            if (result.startsWith("已开启")) {
+                runCatching { container.history.append(HistoryKind.MONITOR_ENABLED) }
+            }
+            _messages.emit(result)
+        }
+    }
+
+    fun disableMonitoring() {
+        viewModelScope.launch {
+            container.controller.disable()
+            runCatching { container.history.append(HistoryKind.MONITOR_DISABLED) }
+            _today.update { it.copy(running = false, stopAt = null) }
+            _messages.emit("后台监控已关")
+        }
+    }
+
+    fun setAutoSignEnabled(enabled: Boolean) {
+        if (enabled && !_signAccess.value.proEnabled) {
+            viewModelScope.launch { _messages.emit("当前仅支持提醒与名单") }
+            return
+        }
+        viewModelScope.launch {
+            container.settings.setAutoSignEnabled(enabled)
+            runCatching {
+                container.history.append(
+                    if (enabled) HistoryKind.AUTO_ENABLED else HistoryKind.AUTO_DISABLED
+                )
+            }
+            _messages.emit(
+                if (enabled) "自动签到已开；锁屏时只提醒，解锁后继续" else "自动签到已关"
+            )
+        }
+    }
+
+    private val _calibration = MutableStateFlow<CalibrationUiState>(CalibrationUiState.Idle)
+    val calibration: StateFlow<CalibrationUiState> = _calibration.asStateFlow()
+
+    /** Local mode: the phone talks to the school directly, no cloud session. */
+    fun setLocalMode(enabled: Boolean) {
+        viewModelScope.launch {
+            container.settings.setLocalMode(enabled)
+            _auth.value = if (enabled) {
+                val name = container.settings.current().rosterName
+                AuthState.LoggedIn(User(id = "", username = "local", displayName = name.ifBlank { "本地模式" }, role = "user"))
+            } else {
+                val settings = container.settings.current()
+                if (settings.serverUrl.isBlank() || container.sessionStore.load() == null) {
+                    AuthState.LoggedOut()
+                } else {
+                    AuthState.LoggedIn(
+                        User(id = "", username = settings.username, displayName = settings.displayName, role = "user")
+                    )
+                }
+            }
+            _messages.emit(
+                if (enabled) "本地模式已开，直连学校接口，不走服务端；要先填名单姓名和教室码" else "已切回云端模式"
+            )
+        }
     }
 
     fun setSplashEnabled(value: Boolean) {
@@ -620,6 +970,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.settings.setWeekDefaultFullscreen(value) }
     }
 
+    fun setRosterName(name: String) {
+        viewModelScope.launch {
+            container.settings.setRosterName(name)
+        }
+    }
+
+    /** Save the roster name and immediately re-check the current activity. */
+    fun saveRosterNameAndRefresh(name: String) {
+        viewModelScope.launch {
+            container.settings.setRosterName(name)
+            refreshToday()
+        }
+    }
+
     private val _grades = MutableStateFlow(GradesUiState())
     val grades: StateFlow<GradesUiState> = _grades.asStateFlow()
 
@@ -742,7 +1106,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             // verified-code lookup.
             val location = matched?.location?.takeIf { it.isNotBlank() } ?: locationHint
             val firstSlot = matched?.slots?.firstOrNull()
-            val code = ""
+            val code = location.takeIf { it.isNotBlank() }?.let { roomCodeFor(it) } ?: ""
             _grades.update { current ->
                 val previous = current.courseDetail
                 val sameCourse = previous.courseName == courseName
@@ -886,6 +1250,19 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Room code (if learned) for a course location, cached at detail open. */
+    private suspend fun roomCodeFor(location: String): String? {
+        if (location.isBlank()) return null
+        // Historical or partial copies can contain a blank/stale mapping; only a
+        // valid four-digit code may short-circuit the catalog lookup.
+        runCatching { container.roomCodes.codeFor(location) }.getOrNull()
+            ?.takeIf { Regex("^\\d{4}$").matches(it) }
+            ?.let { return it }
+        val rooms = catalogRooms.ifEmpty {
+            withContext(Dispatchers.IO) { container.classrooms.cached()?.second.orEmpty() }
+        }
+        return verifiedRoomCode(location, rooms)
+    }
+
     fun exportGradesCsv(): String =
         top.sykesp42.rin.data.DataExporter.gradesCsv(_grades.value.grades)
 
@@ -936,6 +1313,19 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Fill roster matching name from the JWXT student card. */
+    fun fillRosterNameFromJwxt() {
+        viewModelScope.launch {
+            val student = _grades.value.student
+            if (student == null) {
+                message("先到成绩页拉一次教务数据")
+                return@launch
+            }
+            container.settings.setRosterName(student.name)
+            message("已填入教务姓名")
+        }
+    }
+
+    /** Load grades + exams through the local JWXT session, refreshed by TTL. */
     fun loadGrades(force: Boolean = false) {
         if (_grades.value.loading) return
         val cached = container.localCache.read(
@@ -1002,6 +1392,78 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun setLocalThreshold(value: Int) {
+        viewModelScope.launch {
+            container.settings.setLocalThreshold(value)
+        }
+    }
+
+    /** Dry run of the WeChat chain with a harmless link; verifies control compatibility. */
+    fun runCalibration() {
+        if (_calibration.value is CalibrationUiState.Running) return
+        _calibration.value = CalibrationUiState.Running
+        viewModelScope.launch {
+            val result = container.calibration.run()
+            _calibration.value = when (result) {
+                CalibrationRunner.Result.Success ->
+                    CalibrationUiState.Done(true, "演练通过：识码链路与当前企业微信兼容")
+                is CalibrationRunner.Result.Blocked ->
+                    CalibrationUiState.Done(false, calibrationBlockedText(result.reason))
+                is CalibrationRunner.Result.ChainFailed ->
+                    CalibrationUiState.Done(
+                        false,
+                        "演练停在「${result.step}」；企业微信界面可能变了，识码链路要修"
+                    )
+            }
+        }
+    }
+
+    private fun calibrationBlockedText(reason: String): String = when (reason) {
+        CalibrationRunner.REASON_NO_ACCESSIBILITY -> "无障碍服务没开：先开启「Rin自动签到」"
+        CalibrationRunner.REASON_NO_WECOM -> "本机没装企业微信"
+        CalibrationRunner.REASON_LOCKED -> "屏幕锁着或熄屏；解锁亮屏后再试"
+        CalibrationRunner.REASON_BUSY -> "有链路在跑，稍后再试"
+        CalibrationRunner.REASON_QR_ENCODE -> "校准二维码生成失败，再试一次"
+        CalibrationRunner.REASON_PUBLISH -> "写不进共享相册；检查媒体权限后再试"
+        else -> "演练被中断：$reason"
+    }
+
+    fun useRoom(code: String) {
+        if (!_signAccess.value.proEnabled && !container.signAccess.proEnabled()) {
+            message("当前仅支持提醒与名单")
+            return
+        }
+        val normalized = code.filter { it.isDigit() }.take(4)
+        if (normalized.length != 4) {
+            message("填写四位教室码")
+            return
+        }
+        viewModelScope.launch {
+            container.settings.setManualCode(normalized)
+            _today.update { it.copy(manualCode = normalized) }
+            _messages.emit("已切换到教室 $normalized")
+            refreshToday()
+            // Learn: which classroom name lives at this code (from any mode).
+            val settings = container.settings.current()
+            runCatching {
+                val course = container.monitorApi(settings)?.course(normalized) ?: return@runCatching
+                if (course.location.isNotBlank()) {
+                    container.roomCodes.remember(course.location, normalized)
+                    refreshRoomShortcuts()
+                }
+            }
+        }
+    }
+
+    fun clearManualCode() {
+        viewModelScope.launch {
+            container.settings.setManualCode("")
+            _today.update { it.copy(manualCode = "") }
+            _messages.emit("已恢复自动识别教室")
+            refreshToday()
+        }
+    }
+
     fun ensureScheduleLoaded() {
         if (_schedule.value.overview == null && !_schedule.value.loading) loadSchedule()
     }
@@ -1045,6 +1507,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 val current = container.settings.current()
+                val api: MonitorApi = container.monitorApi(current)
+                    ?: container.client(current.serverUrl)
+                    ?: throw IllegalArgumentException("invalid server url")
                 val cacheName = "schedule_week${weekOverride.takeIf { it > 0 } ?: 0}"
                 val cached = container.localCache.read(cacheName, top.sykesp42.rin.data.ApiScheduleOverview.serializer())
                 if (cached != null && cached.second.days.isNotEmpty()) {
@@ -1091,9 +1556,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                             container.withJwxt(current) { api -> api.overview(weekOverride = weekOverride) }
                                 ?: local.overview(weekOverride = weekOverride)
                         }
-                        else -> (local
-                            ?: throw IllegalStateException("教务未连接"))
-                            .overview(weekOverride = weekOverride.takeIf { it > 0 } ?: 0)
+                        else -> api.schedule()
                     }
                 }
                 var cachedAtNow = ""
@@ -1146,14 +1609,21 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     checkScheduleChanges(overview, todayStr)
                 }
                 // Arm today's alarm-only class reminders. They deliberately do
-                // not depend on 后台服务: a reminder that needs the service is a
+                // not depend on 后台监控: a reminder that needs the service is a
                 // reminder that dies with it. Cached data is good enough here.
                 if (weekOverride == 0) {
                     runCatching {
                         container.classReminders.reschedule(overview)
                     }
                 }
-                val configured = container.localJwxtStore.load() != null
+                val configured = if (current.localMode) {
+                    container.localJwxtStore.load() != null
+                } else {
+                    runCatching {
+                        val cloud = api as? ApiClient
+                        cloud != null && withContext(Dispatchers.IO) { cloud.jwxtAccount().configured }
+                    }.getOrDefault(true)
+                }
                 _schedule.value = ScheduleUiState(
                     overview = overview,
                     jwxtConfigured = configured,
@@ -1474,9 +1944,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
             if (!fresh.isNullOrEmpty()) {
-                container.classrooms.save(fresh)
-                applyClassroomCatalog(fresh, Instant.now())
-                if (notify) _messages.emit("教室目录已更新：${fresh.size} 间")
+                val merged = mergeManualRoomCodes(fresh)
+                container.classrooms.save(merged)
+                applyClassroomCatalog(merged, Instant.now())
+                val coded = merged.count { it.code.isNotBlank() }
+                if (notify) _messages.emit("教室目录已更新：${merged.size} 间，$coded 间有考勤码")
             } else {
                 val cached = container.classrooms.cached()
                 if (cached != null) {
@@ -1510,24 +1982,54 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.favorites.toggle(name) }
     }
 
-    /** Pinned (favorited) rooms first; the quick sheet lists names only. */
+    /** Learned room/code pairs, pinned rooms first; used by Today's quick sheet. */
     fun refreshRoomShortcuts() {
         viewModelScope.launch {
+            val learned = runCatching { container.roomCodes.snapshot() }.getOrDefault(emptyMap())
             val favorites = _favorites.value
-            _roomShortcuts.value = favorites
-                .map { RoomShortcut(it, "") }
-                .sortedBy { it.name }
+            _roomShortcuts.value = learned.entries
+                .map { RoomShortcut(it.key, it.value) }
+                .sortedWith(
+                    compareByDescending<RoomShortcut> { it.name in favorites }
+                        .thenBy { it.name }
+                )
                 .take(6)
         }
     }
 
     /** User supplies the four-digit code for a room the picker only knows by name. */
+    fun monitorRoomWithCode(name: String, code: String) {
+        val normalized = code.filter { it.isDigit() }.take(4)
+        if (normalized.length != 4) return
+        viewModelScope.launch {
+            container.roomCodes.remember(name, normalized)
+            refreshRoomShortcuts()
+        }
+        val updated = catalogRooms.map { room ->
+            if (room.name == name && room.code.isBlank()) room.copy(code = normalized) else room
+        }
+        catalogRooms = updated
+        applyClassroomCatalog(updated, Instant.now())
+        useRoom(normalized)
+    }
+
+    private suspend fun mergeManualRoomCodes(rooms: List<JwxtClassroom>): List<JwxtClassroom> {
+        val learned = container.roomCodes.snapshot()
+        if (learned.isEmpty()) return rooms
+        val key = { value: String -> value.trim().replace(Regex("\\s+"), "") }
+        return rooms.map { room ->
+            if (room.code.isNotBlank()) room
+            else learned[key(room.name)]?.let { room.copy(code = it) } ?: room
+        }
+    }
+
     private fun applyClassroomCatalog(
         rooms: List<JwxtClassroom>,
         at: Instant,
         error: String = ""
     ) {
         catalogRooms = rooms
+        val suggestions = suggestClassroomCodes(rooms)
         _classroomCatalog.update {
             it.copy(
                 loading = false,
@@ -1542,7 +2044,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                         campus = room.campus,
                         building = room.building,
                         capacity = room.capacity,
-                        suggestedCode = ""
+                        suggestedCode = suggestions[room.key()].orEmpty()
                     )
                 }
             )
@@ -1568,6 +2070,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 return
             }
             val campus = _classroomCatalog.value.selectedCampus
+            val suggestions = suggestClassroomCodes(catalogRooms)
             val rooms = container.classrooms.search(catalogRooms, trimmed, campus).map { room ->
                 ApiRoom(
                     roomCode = room.code,
@@ -1575,7 +2078,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                     campus = room.campus,
                     building = room.building,
                     capacity = room.capacity,
-                    suggestedCode = ""
+                    suggestedCode = suggestions[room.key()].orEmpty()
                 )
             }
             _search.update {
@@ -1625,6 +2128,109 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Fetch a fresh QR for the current live activity; gates mirror the server. */
+    fun loadSignQr() {
+        if (!_signAccess.value.proEnabled && !container.signAccess.proEnabled()) {
+            _signQr.value = SignQrState(error = "当前仅支持提醒与名单")
+            return
+        }
+        val view = _today.value.view
+        if (view == null) {
+            _signQr.value = SignQrState(error = "当前没有可交接的签到；有签到后再刷新")
+            return
+        }
+        if (!top.sykesp42.rin.monitor.qrEligible(view)) {
+            _signQr.value = SignQrState(error = "签到还没就绪：先在名单确认，或等人数到安全线")
+            return
+        }
+        if (qrJob?.isActive == true) return
+        qrJob = viewModelScope.launch {
+            _signQr.update { it.copy(loading = true, error = "") }
+            try {
+                val current = container.settings.current()
+                val api = container.monitorApi(current)
+                    ?: throw IllegalStateException("接口不可用")
+                val png = withContext(Dispatchers.IO) { api.qrPng(view.roomCode) }
+                if (_today.value.view?.signId != view.signId) return@launch
+                if (png == null) {
+                    _signQr.value = SignQrState(
+                        error = "人数没到安全线，或签到已结束；旧码已隐藏",
+                        type = view.qrType,
+                        refreshSeconds = view.qrRefreshIntervalSeconds,
+                        effectiveEnd = view.effectiveSignEndAt
+                    )
+                    return@launch
+                }
+                _signQr.value = SignQrState(
+                    png = png,
+                    fetchedAt = Instant.now(),
+                    type = view.qrType,
+                    refreshSeconds = view.qrRefreshIntervalSeconds,
+                    effectiveEnd = view.effectiveSignEndAt
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (error.code == "SIGN_ACCESS_REQUIRED") {
+                    onSignAccessDenied()
+                    _signQr.value = SignQrState(
+                        error = "完整功能已停用；当前仅支持提醒与名单",
+                        type = view.qrType,
+                        refreshSeconds = view.qrRefreshIntervalSeconds,
+                        effectiveEnd = view.effectiveSignEndAt
+                    )
+                } else {
+                    _signQr.value = SignQrState(
+                        error = ErrorCopy.from(error) + "；旧码已隐藏",
+                        type = view.qrType,
+                        refreshSeconds = view.qrRefreshIntervalSeconds,
+                        effectiveEnd = view.effectiveSignEndAt
+                    )
+                }
+            } catch (error: Exception) {
+                _signQr.value = SignQrState(
+                    error = ErrorCopy.from(error) + "；旧码已隐藏",
+                    type = view.qrType,
+                    refreshSeconds = view.qrRefreshIntervalSeconds,
+                    effectiveEnd = view.effectiveSignEndAt
+                )
+            }
+        }
+    }
+
+    fun clearSignQr() {
+        qrJob?.cancel()
+        qrJob = null
+        _signQr.value = SignQrState()
+    }
+
+    /** Terminal sign outcomes, newest first; safe to call on every screen visit. */
+    fun loadAttendance() {
+        viewModelScope.launch { refreshAttendance() }
+    }
+
+    private suspend fun refreshAttendance() {
+        val rows = withContext(Dispatchers.IO) {
+            runCatching { container.attendance.all() }.getOrDefault(emptyList())
+        }
+        _attendance.value = AttendanceUiState(
+            records = rows,
+            courses = top.sykesp42.rin.data.courseAttendance(rows),
+            loaded = true
+        )
+    }
+
+    /** Save the roster receipt and fold a finished activity into the ledger. */
+    private suspend fun recordMonitorView(view: MonitorView): RosterSnapshot? {
+        val snapshot = withContext(Dispatchers.IO) {
+            runCatching { container.rosterStore.save(view) }.getOrNull()
+        }
+        val changed = withContext(Dispatchers.IO) {
+            runCatching { container.attendance.record(view) }.getOrDefault(false)
+        }
+        if (changed) refreshAttendance()
+        return snapshot
+    }
+
     fun clearHistory() {
         viewModelScope.launch {
             container.history.clear()
@@ -1633,25 +2239,224 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun ensureThresholdLoaded() {
+        if (thresholdLoaded || _settingsPage.value.thresholdLoading) return
+        loadThreshold()
+    }
+
+    fun loadThreshold() {
+        if (_settingsPage.value.thresholdLoading) return
+        _settingsPage.update { it.copy(thresholdLoading = true, thresholdError = "") }
+        viewModelScope.launch {
+            try {
+                val current = container.settings.current()
+                val api = container.client(current.serverUrl) ?: throw IllegalArgumentException("invalid server url")
+                val value = withContext(Dispatchers.IO) { api.signSettings() }
+                thresholdLoaded = true
+                _settingsPage.update {
+                    it.copy(
+                        threshold = value.rosterThreshold,
+                        minThreshold = value.minThreshold,
+                        maxThreshold = maxOf(value.maxThreshold, 1),
+                        thresholdLoading = false
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _settingsPage.update {
+                        it.copy(
+                            threshold = _today.value.view?.threshold ?: it.threshold,
+                            thresholdLoading = false,
+                            thresholdError = ErrorCopy.from(error)
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _settingsPage.update {
+                    it.copy(
+                        threshold = _today.value.view?.threshold ?: it.threshold,
+                        thresholdLoading = false,
+                        thresholdError = ErrorCopy.from(error)
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveThreshold(value: Int, confirmation: String) {
+        viewModelScope.launch {
+            _settingsPage.update { it.copy(savingThreshold = true, thresholdError = "") }
+            try {
+                val current = container.settings.current()
+                val api = container.client(current.serverUrl) ?: throw IllegalArgumentException("invalid server url")
+                val saved = withContext(Dispatchers.IO) { api.setThreshold(value, confirmation) }
+                thresholdLoaded = true
+                _settingsPage.update { it.copy(threshold = saved, savingThreshold = false) }
+                _messages.emit("阈值已保存：$saved")
+                if (MonitorRuntime.running.value) {
+                    MonitorService.start(container.appContext, REASON_WAKE)
+                } else {
+                    fetchTodayOnce(force = true)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _settingsPage.update {
+                        it.copy(savingThreshold = false, thresholdError = ErrorCopy.from(error))
+                    }
+                }
+            } catch (error: Exception) {
+                _settingsPage.update {
+                    it.copy(savingThreshold = false, thresholdError = ErrorCopy.from(error))
+                }
+            }
+        }
+    }
+
     private fun restoreSession() {
         viewModelScope.launch {
-            // No license server in this build: the local profile is the account.
             val current = container.settings.current()
-            _auth.value = AuthState.LoggedIn(
-                User(
-                    id = "",
-                    username = current.username.ifBlank { "local" },
-                    displayName = current.displayName.ifBlank { current.username.ifBlank { "同学" } },
-                    role = ""
+            if (current.localMode) {
+                _auth.value = AuthState.LoggedIn(
+                    User(id = "", username = "local", displayName = current.rosterName.ifBlank { "本地模式" }, role = "user")
                 )
+                // Local mode has no cloud handshake, but the cached schedule
+                // must still render on cold start; without this the schedule
+                // tab shows blank until the user taps it, and the monitor's
+                // schedule provider has no warm cache to fall back to.
+                bootstrapData()
+                return@launch
+            }
+            if (current.serverUrl.isBlank() || container.sessionStore.load() == null) {
+                _auth.value = AuthState.LoggedOut(
+                    if (MonitorRuntime.authExpired.value) "登录已失效，重新登录" else ""
+                )
+                return@launch
+            }
+            val cached = User(
+                id = "",
+                username = current.username,
+                displayName = current.displayName.ifBlank { current.username.ifBlank { "同学" } },
+                role = ""
             )
-            bootstrapData()
+            _auth.value = AuthState.LoggedIn(cached)
+            val api = container.client(current.serverUrl)
+            if (api == null) {
+                _auth.value = AuthState.LoggedOut("服务地址格式不正确")
+                return@launch
+            }
+            try {
+                val user = withContext(Dispatchers.IO) { api.me() }
+                container.settings.setAccount(user.username, user.displayName)
+                MonitorRuntime.clearAuthExpired()
+                _auth.value = AuthState.LoggedIn(user)
+                bootstrapData()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _messages.emit("连不上服务，先显示上次状态")
+                    bootstrapData()
+                }
+            } catch (error: Exception) {
+                _messages.emit("连不上服务，先显示上次状态")
+                bootstrapData()
+            }
         }
+    }
+
+    /**
+     * Silent grant: after the JWXT session is live, offer 学号+姓名 to the
+     * verification service. Any failure stays quiet — the clean surface never
+     * mentions the attempt.
+     */
+    private fun licenseVerifyIfNeeded() {
+        if (InternalGate.isOn || licenseJob?.isActive == true) return
+        licenseJob = viewModelScope.launch {
+            val snapshot = _settings.value ?: return@launch
+            if (!snapshot.localMode) return@launch
+            val connected = withContext(Dispatchers.IO) {
+                runCatching {
+                    container.localJwxtStore.load() != null || container.jwxtCredentialStore.load() != null
+                }.getOrDefault(false)
+            }
+            if (!connected) return@launch
+            val info = runCatching { container.withJwxt(snapshot) { it.fetchStudentInfo() } }.getOrNull()
+                ?: return@launch
+            val identity = container.licenseIdentity
+            val remote = runCatching {
+                container.licenseApi.verify(
+                    studentId = info.studentId,
+                    realName = info.name,
+                    installationId = identity.installationId(),
+                    appVersion = top.sykesp42.rin.data.appVersionName(container.appContext),
+                    label = android.os.Build.MODEL.orEmpty(),
+                    device = top.sykesp42.rin.data.collectLicenseDeviceInfo(container.appContext)
+                )
+            }.getOrNull() ?: return@launch
+            applyLicenseRemote(remote)
+        }
+    }
+
+    /** The daily re-check: a revoked entitlement drops the app back to clean. */
+    private fun startLicenseStatusLoop() {
+        if (licenseStatusJob?.isActive == true) return
+        licenseStatusJob = viewModelScope.launch {
+            while (true) {
+                delay(24 * 60 * 60_000L)
+                licenseStatusCheck()
+            }
+        }
+    }
+
+    private suspend fun licenseStatusCheck() {
+        if (!InternalGate.isOn) return
+        val identity = container.licenseIdentity
+        val secret = identity.secret()
+        if (secret.isBlank()) return
+        val remote = runCatching {
+            container.licenseApi.status(
+                installationId = identity.installationId(),
+                secret = secret,
+                device = top.sykesp42.rin.data.collectLicenseDeviceInfo(container.appContext)
+            )
+        }.getOrNull() ?: return
+        applyLicenseRemote(remote)
+    }
+
+    private suspend fun applyLicenseRemote(remote: top.sykesp42.rin.data.SignAccessRemote) {
+        if (!remote.secret.isNullOrBlank()) {
+            container.licenseIdentity.saveSecret(remote.secret)
+        }
+        container.signAccess.write(remote)
+        val active = remote.status == "active"
+        _settings.value?.let { current ->
+            if (current.internalMode != active) container.settings.setInternalMode(active)
+        }
+        InternalGate.set(active)
     }
 
     private fun bootstrapData() {
         loadSchedule()
         loadHistory()
+        // The sign-side datasets only exist behind the gate; the clean surface
+        // never polls the monitor, the roster or the threshold.
+        if (!InternalGate.isOn) return
+        fetchTodayOnce()
+        loadAttendance()
+        loadThreshold()
+        // A cold start must see newly approved or revoked access immediately.
+        refreshSignAccess(force = true)
+        startLicenseStatusLoop()
     }
 
     /**
@@ -1675,18 +2480,92 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    private fun fetchTodayOnce(force: Boolean = false) {
+        if (_auth.value !is AuthState.LoggedIn) return
+        if (todayJob?.isActive == true && !force) return
+        todayJob?.cancel()
+        todayJob = viewModelScope.launch {
+            _today.update { it.copy(loading = true, errorCode = "", errorMessage = "") }
+            try {
+                val current = container.settings.current()
+                val api: MonitorApi = container.monitorApi(current)
+                    ?: container.client(current.serverUrl)
+                    ?: throw IllegalArgumentException("invalid server url")
+                val view = MonitorEngine(api).pollOnce(current.manualCode, current.lastHandledSignId)
+                val saved = recordMonitorView(view)
+                _today.update {
+                    it.copy(
+                        view = view,
+                        viewReceivedAt = Instant.now(),
+                        cachedRoster = saved ?: it.cachedRoster,
+                        loading = false,
+                        errorCode = "",
+                        errorMessage = ""
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _today.update {
+                        it.copy(
+                            loading = false,
+                            errorCode = error.code,
+                            errorMessage = ErrorCopy.from(error)
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _today.update {
+                    it.copy(
+                        loading = false,
+                        errorCode = "OFFLINE",
+                        errorMessage = ErrorCopy.from(error)
+                    )
+                }
+            }
+        }
+    }
+
     private fun configuredFlag(current: AppSettings): Boolean =
         if (current.localMode) container.localJwxtStore.load() != null else true
 
     private suspend fun expireSession(reason: String) {
         authMutex.withLock {
+            if (container.settings.current().localMode) {
+                // Local mode never depends on the cloud login. A stale cloud
+                // token behind the failover must not kick the user out, stop
+                // monitoring or cancel the alarm-only class reminders — just
+                // drop the cloud cookie; monitorApi() then stays pure-local.
+                container.sessionStore.clear()
+                MonitorRuntime.clearAuthExpired()
+                return
+            }
+            if (_auth.value is AuthState.LoggedOut) return
             container.sessionStore.clear()
+            container.settings.resetForLogout()
+            container.alarms.cancelAll()
+            MonitorService.stop(container.appContext)
+            withContext(Dispatchers.IO) { container.rosterStore.clear() }
+            withContext(Dispatchers.IO) { container.attendance.clear() }
+            withContext(Dispatchers.IO) { container.scheduleChanges.clear() }
+            _attendance.value = AttendanceUiState()
+            HandoffRuntime.clear()
+            HandoffRuntime.clearOutcome()
+            container.handoffJournal.clear()
+            MonitorRuntime.clearAuthExpired()
+            MonitorRuntime.resetView()
             runCatching { container.history.append(HistoryKind.SESSION_EXPIRED) }
             _auth.value = AuthState.LoggedOut(reason)
             _login.value = LoginUiState()
+            _today.value = TodayUiState()
             _schedule.value = ScheduleUiState()
             _search.value = SearchUiState()
             _history.value = HistoryUiState()
+            _settingsPage.value = SettingsUiState()
+            thresholdLoaded = false
             _messages.emit(reason)
         }
     }

@@ -71,12 +71,57 @@ class ApiClient(
     override suspend fun recommendation(): ApiRecommendation =
         getData("/api/v1/courses/recommendation")
 
+    override suspend fun course(code: String): ApiCourse =
+        getData("/api/v1/courses/${pathSegment(code)}")
+
+    override suspend fun selfSigned(code: String): Boolean {
+        val roster = roster(code)
+        return roster.signed.any { it.isCurrentUser }
+    }
+
+    override suspend fun roster(code: String): ApiRoster =
+        getData("/api/v1/courses/${pathSegment(code)}/roster")
+
+    override suspend fun qrPng(code: String): ByteArray = qrCode(code)
+
     override suspend fun schedule(): ApiScheduleOverview =
         getData("/api/v1/jwxt/schedule/overview")
 
     suspend fun jwxtAccount(): ApiJwxtAccount =
         getData("/api/v1/jwxt/account")
 
+    suspend fun signSettings(): ApiSignSettings =
+        getData("/api/v1/sign/settings")
+
+    suspend fun signAccess(): SignAccessRemote =
+        getData("/api/v1/sign/access")
+
+    suspend fun applySignAccess(code: String, appVersion: String): SignAccessRemote =
+        withContext(Dispatchers.IO) {
+            val payload = buildJsonObject {
+                put("code", code)
+                put("appVersion", appVersion)
+            }
+            val request = requestBuilder("$base/api/v1/sign/access/apply")
+                .post(payload.toString().toRequestBody(mediaJson))
+                .build()
+            call(request) { response ->
+                val root = json.parseToJsonElement(response.body?.string().orEmpty()).jsonObject
+                val data = root["data"] as? JsonObject ?: JsonObject(emptyMap())
+                json.decodeFromJsonElement<SignAccessRemote>(data)
+            }
+        }
+
+    suspend fun signURL(code: String): String = withContext(Dispatchers.IO) {
+        val path = "/api/v1/courses/${pathSegment(code)}/sign-url"
+        call(requestBuilder("$base$path").get().build()) { response ->
+            val root = json.parseToJsonElement(response.body?.string().orEmpty()).jsonObject
+            val data = root["data"] as? JsonObject ?: JsonObject(emptyMap())
+            data["redirectUrl"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        }
+    }
+
+    /** Fresh dynamic sign QR image bytes, minted at request time (threshold-enforced). */
     suspend fun qrCode(code: String): ByteArray = withContext(Dispatchers.IO) {
         val path = "/api/v1/courses/${pathSegment(code)}/qr"
         call(requestBuilder("$base$path").get().build()) { response ->
@@ -93,6 +138,20 @@ class ApiClient(
         }
     }
 
+    suspend fun setThreshold(threshold: Int, confirmation: String): Int = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject {
+            put("rosterThreshold", threshold)
+            if (confirmation.isNotBlank()) put("confirmation", confirmation)
+        }
+        val request = requestBuilder("$base/api/v1/sign/settings")
+            .patch(payload.toString().toRequestBody(mediaJson))
+            .build()
+        call(request) { response ->
+            val root = json.parseToJsonElement(response.body?.string().orEmpty()).jsonObject
+            val data = root["data"] as? JsonObject ?: JsonObject(emptyMap())
+            data["rosterThreshold"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: threshold
+        }
+    }
 
     private suspend inline fun <reified T> getData(path: String): T = withContext(Dispatchers.IO) {
         call(requestBuilder("$base$path").get().build()) { response ->

@@ -1,10 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <queries>
+        <package android:name="com.tencent.mm" />
+        <package android:name="com.tencent.wework" />
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -22,6 +31,9 @@
             android:launchMode="singleTop"
             android:theme="@style/Theme.Rin.Launch"
             android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -29,10 +41,39 @@
         </activity>
 
         <activity
-            android:name=".jwxt.JwxtLoginActivity"
+            android:name=".handoff.HandoffActivity"
+            android:excludeFromRecents="true"
             android:exported="false"
-            android:theme="@style/Theme.Rin"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
+            android:theme="@style/Theme.Rin" />
+
+        <activity
+            android:name=".jwxt.JwxtLoginActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false" />
+
+        <service
+            android:name=".monitor.MonitorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="class attendance monitoring inside class windows and user-confirmed sign handoff" />
+        </service>
+
+        <service
+            android:name=".monitor.SessionKeeper"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="keep the local school session warm so attendance checks survive between classes" />
+        </service>
+
+
+
+        <receiver
+            android:name=".monitor.MonitorAlarmReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".reminder.CourseReminderReceiver"
@@ -51,6 +92,48 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".widget.SignWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="top.sky2333.suisign.action.WIDGET_REFRESH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_sign_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.WidgetCompactProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_compact_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.WidgetBarProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_bar_info" />
+        </receiver>
+
+        <receiver
+            android:name=".monitor.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

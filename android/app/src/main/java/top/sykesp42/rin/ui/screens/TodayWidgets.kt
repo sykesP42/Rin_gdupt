@@ -57,6 +57,7 @@ import java.util.Locale
 import top.sykesp42.rin.data.ApiScheduleEvent
 import top.sykesp42.rin.data.ApiScheduleOverview
 import top.sykesp42.rin.data.AppSettings
+import top.sykesp42.rin.data.InternalGate
 import top.sykesp42.rin.data.CampusNewsItem
 import top.sykesp42.rin.data.JwxtExam
 import top.sykesp42.rin.monitor.NoticeFaces
@@ -364,7 +365,8 @@ internal fun MiniTimetableTableCard(
 internal fun QuickLinksCard(
     settings: AppSettings,
     newsUrl: String,
-    onSchedule: () -> Unit
+    onSchedule: () -> Unit,
+    onSign: () -> Unit
 ) {
     val context = LocalContext.current
     val colors = LocalSuiSignColors.current
@@ -390,7 +392,12 @@ internal fun QuickLinksCard(
                     }
                 }
             }
-            QuickLink("打开课表", Modifier.weight(1f), onSchedule)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                QuickLink("打开课表", Modifier.weight(1f), onSchedule)
+                if (InternalGate.isOn) {
+                    QuickLink("去签到", Modifier.weight(1f), onSign)
+                }
+            }
         }
     }
 }

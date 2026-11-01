@@ -1,3 +1,10 @@
 <resources>
     <string name="app_name">Rin</string>
+        <string name="auto_service_description">仅在你开启自动签到后使用：把当次二维码交给本机企业微信识码，普通微信作交接回退。期间向共享相册 Pictures/Rin 临时写一张一次性二维码，识码或失败后立即删除。不读取、不存储、不上传聊天内容，不给其他应用使用，仅限本人账号。</string>
+        <string name="widget_description">下一节课与签到状态</string>
+        <string name="auto_service_label">Rin自动签到</string>
+        <string name="shortcut_schedule">学业课表</string>
+        <string name="shortcut_schedule_long">打开学业课表</string>
+        <string name="shortcut_rooms">空教室</string>
+        <string name="shortcut_rooms_long">查询空闲教室</string>
 </resources>

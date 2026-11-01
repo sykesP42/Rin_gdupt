@@ -40,6 +40,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import top.sykesp42.rin.data.InternalGate
+import top.sykesp42.rin.monitor.SessionKeeper
 import top.sykesp42.rin.R
 import top.sykesp42.rin.data.AppSettings
 import top.sykesp42.rin.ui.Identity
@@ -47,7 +49,9 @@ import top.sykesp42.rin.ui.components.BrandMark
 import top.sykesp42.rin.ui.components.RinBackdrop
 import top.sykesp42.rin.ui.components.RinBottomBar
 import top.sykesp42.rin.ui.components.ThemePickerSheet
+import top.sykesp42.rin.ui.screens.HistoryScreen
 import top.sykesp42.rin.ui.screens.ScheduleScreen
+import top.sykesp42.rin.ui.screens.SearchScreen
 import top.sykesp42.rin.ui.screens.SettingsScreen
 import top.sykesp42.rin.ui.screens.TodayScreen
 import top.sykesp42.rin.ui.theme.LocalAnimationsEnabled
@@ -58,19 +62,23 @@ import top.sykesp42.rin.ui.theme.ThemeMode
 enum class MainTab(val label: String, @DrawableRes val icon: Int) {
     TODAY("今日", R.drawable.ic_tab_today),
     SCHEDULE("课表", R.drawable.ic_tab_schedule),
+    SIGN("签到", R.drawable.ic_tab_sign),
     SEARCH("校务", R.drawable.ic_tab_campus),
     ME("我的", R.drawable.ic_tab_me)
 }
 
 object MainNavigation {
-    fun visibleTabs(minimal: Boolean): List<MainTab> =
-        if (minimal) listOf(MainTab.TODAY, MainTab.ME) else MainTab.entries.toList()
+    fun visibleTabs(minimal: Boolean, full: Boolean): List<MainTab> = when {
+        minimal && full -> listOf(MainTab.SIGN, MainTab.ME)
+        minimal -> listOf(MainTab.TODAY, MainTab.ME)
+        else -> MainTab.entries.filter { it != MainTab.SIGN || full }
+    }
 
-    fun homeTab(minimal: Boolean): MainTab = MainTab.TODAY
+    fun homeTab(minimal: Boolean): MainTab = if (minimal && InternalGate.isOn) MainTab.SIGN else MainTab.TODAY
 
     /** Restores a saved tab by name; an old/removed name falls back to the home tab. */
-    fun restoreTab(name: String, minimal: Boolean): MainTab =
-        MainTab.entries.firstOrNull { it.name == name && it in visibleTabs(minimal) }
+    fun restoreTab(name: String, minimal: Boolean, full: Boolean): MainTab =
+        MainTab.entries.firstOrNull { it.name == name && it in visibleTabs(minimal, full) }
             ?: homeTab(minimal)
 }
 
@@ -110,8 +118,14 @@ fun SuiSignApp(vm: AppViewModel, settings: AppSettings?, initialTab: MainTab = M
         return
     }
 
-    // No onboarding and no account gate in this build: the local profile is
-    // the account and every non-sign feature is available from first launch.
+    val context = LocalContext.current
+    LaunchedEffect(settings.localMode, settings.monitorEnabled) {
+        SessionKeeper.sync(context, settings.localMode && settings.monitorEnabled)
+    }
+
+    // No onboarding gate in this build: the local profile is the account, the
+    // license comes from the verification service, so first launch lands
+    // straight on the main surface.
     when (val currentAuth = auth) {
         is AuthState.LoggedIn ->
             MainScaffold(vm = vm, settings = settings, user = currentAuth.user, initialTab = initialTab)
@@ -129,11 +143,12 @@ private fun MainScaffold(
     var tab by rememberSaveable(
         stateSaver = androidx.compose.runtime.saveable.Saver<MainTab, String>(
             save = { it.name },
-            restore = { MainNavigation.restoreTab(it, settings.minimalMode) }
+            restore = { MainNavigation.restoreTab(it, settings.minimalMode, InternalGate.isOn) }
         )
     ) {
         mutableStateOf(if (settings.minimalMode) MainNavigation.homeTab(true) else initialTab)
     }
+    var historyOpen by rememberSaveable { mutableStateOf(false) }
     var campusSection by rememberSaveable { mutableStateOf<Int?>(null) }
     var themePickerOpen by rememberSaveable { mutableStateOf(false) }
     var profileSignal by rememberSaveable { mutableIntStateOf(0) }
@@ -146,31 +161,46 @@ private fun MainScaffold(
     val risePx = with(density) { 8.dp.roundToPx() }
     // One name for the whole app: privacy mode must not leak the real one.
     val displayName = Identity.displayName(settings, user.displayName.ifBlank { user.username })
-    val tabs = remember(settings.minimalMode) { MainNavigation.visibleTabs(settings.minimalMode) }
+    val gateOn by InternalGate.enabled.collectAsStateWithLifecycle()
+    val tabs = remember(settings.minimalMode, gateOn) { MainNavigation.visibleTabs(settings.minimalMode, gateOn) }
     val homeTab = MainNavigation.homeTab(settings.minimalMode)
 
     fun selectTab(item: MainTab) {
+        if (item == tab && item == MainTab.SIGN && historyOpen) {
+            historyOpen = false
+            return
+        }
         if (item == MainTab.SEARCH && tab == MainTab.SEARCH) campusSection = null
         if (item != MainTab.SEARCH) campusSection = null
         tab = item
+        if (item != MainTab.SIGN) historyOpen = false
         when (item) {
-            MainTab.TODAY -> vm.ensureScheduleLoaded()
+            MainTab.TODAY -> {
+                vm.ensureTodayLoaded()
+                vm.ensureScheduleLoaded()
+            }
             MainTab.SCHEDULE -> vm.ensureScheduleLoaded()
-            MainTab.ME -> Unit
+            MainTab.SIGN -> {
+                vm.ensureTodayLoaded()
+                vm.ensureScheduleLoaded()
+            }
+            MainTab.ME -> vm.ensureThresholdLoaded()
             MainTab.SEARCH -> Unit
         }
     }
 
-    BackHandler(enabled = tab != homeTab) {
-        selectTab(homeTab)
+    BackHandler(enabled = historyOpen || tab != homeTab) {
+        if (historyOpen) historyOpen = false else selectTab(homeTab)
     }
     LaunchedEffect(settings.minimalMode) {
+        historyOpen = false
         if (tabs.none { it == tab }) tab = homeTab
     }
     LaunchedEffect(Unit) {
         vm.messages.collect { snackbar.showSnackbar(it) }
     }
     LaunchedEffect(Unit) {
+        vm.ensureTodayLoaded()
         vm.ensureScheduleLoaded()
     }
 
@@ -203,7 +233,7 @@ private fun MainScaffold(
             }
         ) { padding ->
             AnimatedContent(
-                targetState = tab,
+                targetState = tab to historyOpen,
                 transitionSpec = {
                     if (!animations) {
                         fadeIn(tween(0)) togetherWith fadeOut(tween(0))
@@ -219,7 +249,7 @@ private fun MainScaffold(
                     .fillMaxSize()
                     .padding(padding)
                     .consumeWindowInsets(padding)
-            ) { activeTab ->
+            ) { (activeTab, showingHistory) ->
                 when (activeTab) {
                     MainTab.TODAY -> TodayScreen(
                         vm = vm,
@@ -227,6 +257,7 @@ private fun MainScaffold(
                         avatarText = displayName,
                         onToggleTheme = openThemePicker,
                         onOpenSchedule = { selectTab(MainTab.SCHEDULE) },
+                        onOpenSign = { selectTab(MainTab.SIGN) },
                         minimal = settings.minimalMode
                     )
                     MainTab.SCHEDULE -> ScheduleScreen(
@@ -237,17 +268,53 @@ private fun MainScaffold(
                         onGoToday = { selectTab(MainTab.TODAY) },
                         onOpenProfile = { selectTab(MainTab.ME); profileSignal++ }
                     )
-                    MainTab.SEARCH -> {
-                        ScheduleScreen(
+                    MainTab.SIGN -> if (showingHistory) {
+                        HistoryScreen(
                             vm = vm,
                             themeMode = themeMode,
                             avatarText = displayName,
                             onToggleTheme = openThemePicker,
-                            onGoToday = { selectTab(MainTab.TODAY) },
-                            academicOnly = true,
-                            initialSegment = campusSection ?: 0,
-                            onBack = { campusSection = null }
+                            onBack = { historyOpen = false }
                         )
+                    } else {
+                        TodayScreen(
+                            vm = vm,
+                            themeMode = themeMode,
+                            avatarText = displayName,
+                            onToggleTheme = openThemePicker,
+                            onOpenSchedule = { selectTab(MainTab.SCHEDULE) },
+                            signOnly = true,
+                            onOpenHistory = {
+                                vm.loadHistory()
+                                vm.loadAttendance()
+                                historyOpen = true
+                            }
+                        )
+                    }
+                    MainTab.SEARCH -> {
+                        val section = campusSection
+                        if (section != null) {
+                            ScheduleScreen(
+                                vm = vm,
+                                themeMode = themeMode,
+                                avatarText = displayName,
+                                onToggleTheme = openThemePicker,
+                                onGoToday = { selectTab(MainTab.TODAY) },
+                                academicOnly = true,
+                                initialSegment = section,
+                                onBack = { campusSection = null }
+                            )
+                        } else {
+                            SearchScreen(
+                                vm = vm,
+                                themeMode = themeMode,
+                                avatarText = displayName,
+                                onToggleTheme = openThemePicker,
+                                onOpenToday = { selectTab(MainTab.TODAY) },
+                                onOpenSchedule = { selectTab(MainTab.SCHEDULE) },
+                                onOpenAcademic = { campusSection = it }
+                            )
+                        }
                     }
                     MainTab.ME -> SettingsScreen(
                         vm = vm,

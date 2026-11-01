@@ -39,6 +39,10 @@ import kotlinx.coroutines.delay
 import java.time.Instant
 import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.AppSettings
+import top.sykesp42.rin.handoff.HandoffRuntime
+import top.sykesp42.rin.handoff.withinHandoffGrace
+import top.sykesp42.rin.monitor.MonitorService
+import top.sykesp42.rin.monitor.REASON_CONFIRM
 import top.sykesp42.rin.ui.AppViewModel
 import top.sykesp42.rin.ui.RinSplash
 import top.sykesp42.rin.ui.SuiSignApp
@@ -121,10 +125,26 @@ class MainActivity : ComponentActivity() {
                     splashSettled = true
                 }
             }
+            // An OEM process kill during the 60s confirmation must not drop
+            // the receipt: resume the journaled window in the foreground.
+            LaunchedEffect(Unit) {
+                val pending = container.handoffJournal.loadResumable() ?: return@LaunchedEffect
+                HandoffRuntime.begin(pending)
+                runCatching { MonitorService.start(container.appContext, REASON_CONFIRM) }
+            }
             val lifecycleOwner = LocalLifecycleOwner.current
             DisposableEffect(lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+                    // Pending approval and server-side revocation are only
+                    // visible after a fresh entitlement check.
+                    vm.refreshSignAccess(force = true)
+                    // Returning from WeChat (or an OEM killing only the
+                    // service) must re-arm a still-live window.
+                    val pending = HandoffRuntime.current() ?: return@LifecycleEventObserver
+                    if (withinHandoffGrace(pending, Instant.now())) {
+                        runCatching { MonitorService.start(container.appContext, REASON_CONFIRM) }
+                    }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -164,7 +184,16 @@ class MainActivity : ComponentActivity() {
                                     scaleY = appScale
                                 }
                         ) {
-                            SuiSignApp(vm = vm, settings = settings)
+                            val tabKey = intent?.getStringExtra(top.sykesp42.rin.widget.WidgetShortcuts.EXTRA_TAB)
+                                ?: intent?.data
+                                    ?.takeIf { it.scheme == "rin" && it.host == "tab" }
+                                    ?.lastPathSegment
+                            val shortcutTab = when (tabKey) {
+                                top.sykesp42.rin.widget.WidgetShortcuts.TAB_SCHEDULE -> top.sykesp42.rin.ui.MainTab.SCHEDULE
+                                top.sykesp42.rin.widget.WidgetShortcuts.TAB_SEARCH -> top.sykesp42.rin.ui.MainTab.SEARCH
+                                else -> top.sykesp42.rin.ui.MainTab.TODAY
+                            }
+                            SuiSignApp(vm = vm, settings = settings, initialTab = shortcutTab)
                         }
                         AnimatedVisibility(
                             visible = splashVisible,

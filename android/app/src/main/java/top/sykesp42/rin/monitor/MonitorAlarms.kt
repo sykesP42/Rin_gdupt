@@ -39,7 +39,7 @@ class MonitorAlarms(private val context: Context) : AlarmSink {
 
     /**
      * Class-start reminder alarm. Independent of the monitor service: the
-     * receiver posts the notification itself, so 后台服务 being off or killed
+     * receiver posts the notification itself, so 后台监控 being off or killed
      * does not silence it. [slot] keeps the PendingIntents distinct.
      */
     fun scheduleReminder(
@@ -50,7 +50,7 @@ class MonitorAlarms(private val context: Context) : AlarmSink {
         key: String
     ) {
         val at = maxOf(epochMillis, System.currentTimeMillis() + MIN_DELAY_MILLIS)
-        val intent = Intent(context, ClassReminderReceiver::class.java).apply {
+        val intent = Intent(context, MonitorAlarmReceiver::class.java).apply {
             action = ACTION_REMIND
             putExtra(EXTRA_REMIND_COURSE, courseName)
             putExtra(EXTRA_REMIND_LOCATION, location)
@@ -71,7 +71,7 @@ class MonitorAlarms(private val context: Context) : AlarmSink {
         val pending = PendingIntent.getBroadcast(
             context,
             REQUEST_REARM,
-            Intent(context, ClassReminderReceiver::class.java).setAction(ACTION_REARM),
+            Intent(context, MonitorAlarmReceiver::class.java).setAction(ACTION_REARM),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         setAt(at, pending)
@@ -82,7 +82,7 @@ class MonitorAlarms(private val context: Context) : AlarmSink {
             val pending = PendingIntent.getBroadcast(
                 context,
                 REQUEST_REMIND_BASE + slot,
-                Intent(context, ClassReminderReceiver::class.java).setAction(ACTION_REMIND),
+                Intent(context, MonitorAlarmReceiver::class.java).setAction(ACTION_REMIND),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             manager.cancel(pending)
@@ -135,7 +135,7 @@ class MonitorAlarms(private val context: Context) : AlarmSink {
     }
 
     private fun pendingIntent(requestCode: Int, action: String, reason: String?): PendingIntent {
-        val intent = Intent(context, ClassReminderReceiver::class.java).apply {
+        val intent = Intent(context, MonitorAlarmReceiver::class.java).apply {
             this.action = action
             if (reason != null) putExtra(EXTRA_REASON, reason)
         }

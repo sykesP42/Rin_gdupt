@@ -29,6 +29,11 @@ object ErrorCopy {
         "RATE_LIMITED" -> "操作太频繁，稍后再试"
         "UPSTREAM_RESTRICTED" -> "教务系统没响应，稍后再试"
         "JWXT_ACCOUNT_REQUIRED" -> "先在网页端连接教务系统"
+        "NOT_IN_ROSTER" -> "名单里没有你"
+        "AMBIGUOUS_ROSTER_NAME" -> "名单有同名，需人工确认"
+        "ROSTER_BELOW_THRESHOLD" -> "签到人数还不够"
+        "AUTO_REDIRECT_DISABLED" -> "阈值设为 0，需手动签到"
+        "SIGN_UNAVAILABLE" -> "现在没有签到"
         "OFFLINE", "HTTP_ERROR" -> "网络不可用，稍后重试"
         "VALIDATION_ERROR" -> fallback.ifBlank { "提交的内容不符合要求" }
         else -> fallback.ifBlank { "请求失败，稍后重试" }

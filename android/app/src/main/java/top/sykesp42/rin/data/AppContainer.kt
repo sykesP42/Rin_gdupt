@@ -8,9 +8,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
+import top.sykesp42.rin.handoff.HandoffJournal
 import top.sykesp42.rin.monitor.MonitorAlarms
-import top.sykesp42.rin.monitor.ClassReminderAlarms
+import top.sykesp42.rin.monitor.MonitorController
 import top.sykesp42.rin.monitor.MonitorNotifications
+import top.sykesp42.rin.monitor.MonitorScheduler
 
 /** Manual dependency container: no Hilt/Koin, keeps the APK small. */
 class AppContainer private constructor(context: Context) {
@@ -19,15 +21,24 @@ class AppContainer private constructor(context: Context) {
     val sessionStore: SessionStore = KeystoreSessionStore(File(appContext.filesDir, "session.bin"))
     val localJwxtStore: SessionStore = KeystoreSessionStore(File(appContext.filesDir, "jwxt_session.bin"))
     val jwxtCredentialStore: SessionStore = KeystoreSessionStore(File(appContext.filesDir, "jwxt_credential.bin"))
+    val waSessionStore: SessionStore = KeystoreSessionStore(File(appContext.filesDir, "wa_session.bin"))
+    val waAttendance by lazy { WaAttendanceApi() }
+    val roomCodes = RoomCodeMemory(appContext)
     val favorites = FavoriteRoomsStore(appContext)
     val manualSchedule = ManualScheduleStore(appContext)
     val courseReminders = CourseReminderStore(appContext)
     val localCache = LocalCache(appContext)
+    val signAccess = SignAccessStore(localCache)
+    val licenseIdentity = LicenseIdentityStore(appContext)
+    val licenseApi by lazy { LicenseApi() }
+    val rosterStore = RosterStore(localCache)
+    val attendance = AttendanceLedger(localCache)
     val scheduleChanges = ScheduleChangeStore(localCache)
     val checklists = ChecklistStore(appContext)
     val courseOverrides = CourseOverridesStore(appContext)
     val customTheme = CustomThemeStore(appContext)
     val classrooms = ClassroomCatalogRepository(localCache)
+    val handoffJournal = HandoffJournal(appContext)
     val petWeather = PetWeatherRepository()
 
     /** Public school-news fetcher (HTTPS, single list page, cached by the VM). */
@@ -321,12 +332,82 @@ class AppContainer private constructor(context: Context) {
     val history = HistoryStore(File(appContext.filesDir, "history.jsonl"))
     val notifications = MonitorNotifications(appContext)
     val alarms = MonitorAlarms(appContext)
-    val classReminders by lazy { ClassReminderAlarms(alarms, settings) }
+    val scheduler = MonitorScheduler(alarms)
+    val classReminders by lazy { top.sykesp42.rin.monitor.ClassReminderAlarms(alarms, settings) }
+    val controller by lazy { MonitorController(this) }
+    val gallery by lazy { top.sykesp42.rin.auto.GalleryPublisher(appContext) }
+    val calibration by lazy {
+        val publisher = gallery
+        top.sykesp42.rin.auto.CalibrationRunner(
+            gates = top.sykesp42.rin.auto.AndroidAutoGates(appContext),
+            driverProvider = { top.sykesp42.rin.auto.AutoRuntime.driver() },
+            qrSource = { top.sykesp42.rin.auto.QrEncoder.encodePng(top.sykesp42.rin.auto.CalibrationRunner.CALIBRATION_URL) },
+            publisher = { png -> runCatching { publisher.publish(png) }.getOrDefault(false) },
+            historySink = { state ->
+                runCatching { history.append(HistoryKind.AUTO_CALIBRATION, "", "", state) }
+            }
+        )
+    }
 
     fun client(serverUrl: String): ApiClient? {
         if (serverUrl.isBlank()) return null
         return runCatching { ApiClient(serverUrl, sessionStore) }.getOrNull()
     }
+
+    /**
+     * Mode-aware with cloud fallback: local mode that keeps failing (school
+     * throttling, network) degrades to the cloud proxy when a session exists.
+     */
+    fun monitorApi(settings: AppSettings): MonitorApi? {
+        val primary = monitorApiPrimary(settings) ?: return null
+        if (!settings.localMode) return primary
+        val fallback = client(settings.serverUrl) ?: return primary
+        if (sessionStore.load() == null) return primary
+        return FailoverMonitorApi(primary = primary, fallback = fallback)
+    }
+
+    private fun monitorApiPrimary(settings: AppSettings): MonitorApi? {
+        if (settings.localMode) {
+            val scheduleProvider: suspend () -> ApiScheduleOverview = {
+                // Blocking school I/O: monitor polls call this from the main
+                // dispatcher, so the whole lookup must hop off it.
+                withContext(Dispatchers.IO) {
+                    // Live first; a dead JWXT session must not blank out classroom
+                    // recognition while a cached overview still knows today's rooms.
+                    val live = runCatching {
+                        withJwxt(settings) { api -> api.overview() }
+                    }.getOrNull()
+                    if (live != null && (live.days.isNotEmpty() || live.today.isNotEmpty())) {
+                        cacheLiveSchedule(live)
+                        live
+                    } else {
+                        runCatching {
+                            localCache.read(
+                                "schedule_week0",
+                                ApiScheduleOverview.serializer()
+                            )?.second
+                        }.getOrNull() ?: throw IllegalStateException("课表未缓存")
+                    }
+                }
+            }
+            return LocalSchoolApi(
+                rosterName = { settings.rosterName },
+                threshold = { settings.localThreshold },
+                scheduleProvider = scheduleProvider,
+                roomCodeFor = { location ->
+                    // Learned mapping first, then the fetched classroom catalog:
+                    // a cold-start user has no learned codes yet, and without
+                    // this fallback local monitoring could never auto-match.
+                    roomCodes.codeFor(location)
+                        ?: classrooms.cached()?.second?.let { verifiedRoomCode(location, it) }
+                }
+            )
+        }
+        return client(settings.serverUrl)
+    }
+
+    fun localApi(settings: AppSettings): LocalSchoolApi? =
+        if (settings.localMode) monitorApi(settings) as? LocalSchoolApi else null
 
     companion object {
         private const val TERM_CACHE = "term_courses"

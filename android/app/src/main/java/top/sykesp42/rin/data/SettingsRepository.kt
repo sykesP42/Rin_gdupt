@@ -23,7 +23,10 @@ private val Context.settingsStore: DataStore<Preferences> by preferencesDataStor
 
 data class AppSettings(
     val serverUrl: String = "",
-    val localMode: Boolean = false,
+    val monitorEnabled: Boolean = false,
+    val autoSignEnabled: Boolean = false,
+    val localMode: Boolean = true,
+    val rosterName: String = "",
     val localThreshold: Int = 10,
     val selectedCampus: String = "",
     val jwxtBaseUrl: String = "https://jwxt.gdupt.edu.cn",
@@ -33,10 +36,13 @@ data class AppSettings(
     val lastRemindedClassKey: String = "",
     val splashEnabled: Boolean = true,
     val minimalMode: Boolean = false,
+    val internalMode: Boolean = false,
     val animationsEnabled: Boolean = true,
     val petEnabled: Boolean = true,
     val petContextAware: Boolean = true,
     val petWeatherEnabled: Boolean = true,
+    val manualCode: String = "",
+    val lastHandledSignId: String = "",
     val lastNotifiedSignId: String = "",
     val theme: String = THEME_RIN,
     val themeAccent: String = "",
@@ -84,6 +90,9 @@ data class AppSettings(
     val onboarded: Boolean = false
 ) {
     companion object {
+        // Mirrors the server's roster threshold bounds so local mode can never
+        // demand a threshold the cloud would clamp (0..30).
+        const val LOCAL_THRESHOLD_MAX = 30
         const val THEME_RIN = "rin"
         const val THEME_MONET = "monet"
         const val THEME_DARK = "dark"
@@ -97,7 +106,11 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
 
     private object Keys {
         val serverUrl = stringPreferencesKey("server_url")
+        val monitorEnabled = booleanPreferencesKey("monitor_enabled")
+        val autoSignEnabled = booleanPreferencesKey("auto_sign_enabled")
         val localMode = booleanPreferencesKey("local_mode")
+        val rosterName = stringPreferencesKey("roster_name")
+        val localThreshold = stringPreferencesKey("local_threshold")
         val selectedCampus = stringPreferencesKey("selected_campus")
         val jwxtBaseUrl = stringPreferencesKey("jwxt_base_url")
         val jwxtConnectedAt = stringPreferencesKey("jwxt_connected_at")
@@ -106,10 +119,13 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         val lastRemindedClassKey = stringPreferencesKey("last_reminded_class_key")
         val splashEnabled = booleanPreferencesKey("splash_enabled")
         val minimalMode = booleanPreferencesKey("minimal_mode")
+        val internalMode = booleanPreferencesKey("internal_mode")
         val animationsEnabled = booleanPreferencesKey("animations_enabled")
         val petEnabled = booleanPreferencesKey("pet_enabled")
         val petContextAware = booleanPreferencesKey("pet_context_aware")
         val petWeatherEnabled = booleanPreferencesKey("pet_weather_enabled")
+        val manualCode = stringPreferencesKey("manual_code")
+        val lastHandledSignId = stringPreferencesKey("last_handled_sign_id")
         val lastNotifiedSignId = stringPreferencesKey("last_notified_sign_id")
         val theme = stringPreferencesKey("theme")
         val themeAccent = stringPreferencesKey("theme_accent")
@@ -164,7 +180,12 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
         .map { prefs ->
             AppSettings(
                 serverUrl = prefs[Keys.serverUrl].orEmpty(),
-                localMode = prefs[Keys.localMode] ?: false,
+                monitorEnabled = prefs[Keys.monitorEnabled] ?: false,
+                autoSignEnabled = prefs[Keys.autoSignEnabled] ?: false,
+                localMode = prefs[Keys.localMode] ?: true,
+                rosterName = prefs[Keys.rosterName].orEmpty(),
+                localThreshold = (prefs[Keys.localThreshold]?.toIntOrNull() ?: 10)
+                    .coerceIn(0, AppSettings.LOCAL_THRESHOLD_MAX),
                 selectedCampus = prefs[Keys.selectedCampus].orEmpty(),
                 jwxtBaseUrl = prefs[Keys.jwxtBaseUrl].orEmpty().ifBlank { "https://jwxt.gdupt.edu.cn" },
                 jwxtConnectedAt = prefs[Keys.jwxtConnectedAt].orEmpty(),
@@ -173,10 +194,13 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
                 lastRemindedClassKey = prefs[Keys.lastRemindedClassKey].orEmpty(),
                 splashEnabled = prefs[Keys.splashEnabled] ?: true,
                 minimalMode = prefs[Keys.minimalMode] ?: false,
+                internalMode = prefs[Keys.internalMode] ?: false,
                 animationsEnabled = prefs[Keys.animationsEnabled] ?: true,
                 petEnabled = prefs[Keys.petEnabled] ?: true,
                 petContextAware = prefs[Keys.petContextAware] ?: true,
                 petWeatherEnabled = prefs[Keys.petWeatherEnabled] ?: true,
+                manualCode = prefs[Keys.manualCode].orEmpty(),
+                lastHandledSignId = prefs[Keys.lastHandledSignId].orEmpty(),
                 lastNotifiedSignId = prefs[Keys.lastNotifiedSignId].orEmpty(),
                 theme = top.sykesp42.rin.ui.theme.ThemeMode.from(prefs[Keys.theme].orEmpty()).key,
                 themeAccent = prefs[Keys.themeAccent].orEmpty(),
@@ -232,10 +256,17 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
 
     suspend fun setServerUrl(value: String) = edit { it[Keys.serverUrl] = value.trim().trimEnd('/') }
 
+    suspend fun setMonitorEnabled(enabled: Boolean) = edit { it[Keys.monitorEnabled] = enabled }
 
+    suspend fun setAutoSignEnabled(enabled: Boolean) = edit { it[Keys.autoSignEnabled] = enabled }
 
     suspend fun setLocalMode(enabled: Boolean) = edit { it[Keys.localMode] = enabled }
 
+    suspend fun setRosterName(name: String) = edit { it[Keys.rosterName] = name.trim() }
+
+    suspend fun setLocalThreshold(value: Int) = edit {
+        it[Keys.localThreshold] = value.coerceIn(0, AppSettings.LOCAL_THRESHOLD_MAX).toString()
+    }
 
     suspend fun setSelectedCampus(value: String) = edit { it[Keys.selectedCampus] = value.trim() }
 
@@ -256,6 +287,8 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
 
     suspend fun setMinimalMode(value: Boolean) = edit { it[Keys.minimalMode] = value }
 
+    suspend fun setInternalMode(value: Boolean) = edit { it[Keys.internalMode] = value }
+
     suspend fun setAnimationsEnabled(value: Boolean) = edit { it[Keys.animationsEnabled] = value }
 
     suspend fun setPetEnabled(value: Boolean) = edit { it[Keys.petEnabled] = value }
@@ -264,7 +297,9 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
 
     suspend fun setPetWeatherEnabled(value: Boolean) = edit { it[Keys.petWeatherEnabled] = value }
 
+    suspend fun setManualCode(code: String) = edit { it[Keys.manualCode] = code.trim() }
 
+    suspend fun setLastHandledSignId(signId: String) = edit { it[Keys.lastHandledSignId] = signId }
 
     suspend fun setLastNotifiedSignId(signId: String) = edit { it[Keys.lastNotifiedSignId] = signId }
 
@@ -404,6 +439,10 @@ class SettingsRepository(private val store: DataStore<Preferences>) {
     suspend fun setOnboarded(value: Boolean) = edit { it[Keys.onboarded] = value }
 
     suspend fun resetForLogout() = edit {
+        it[Keys.monitorEnabled] = false
+        it[Keys.autoSignEnabled] = false
+        it[Keys.manualCode] = ""
+        it[Keys.lastHandledSignId] = ""
         it[Keys.lastNotifiedSignId] = ""
         it.remove(Keys.username)
         it.remove(Keys.displayName)

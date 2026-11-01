@@ -64,7 +64,7 @@ data class ScheduledClassReminder(
  * Every remaining class start in the loaded week, not just today: opening the
  * app once arms the whole week, so a morning without an app launch still gets
  * its reminder. Alarms are pure AlarmManager entries and fire whether or not
- * 后台服务 is running.
+ * 后台监控 is running.
  */
 fun scheduleClassReminders(
     overview: ApiScheduleOverview,
