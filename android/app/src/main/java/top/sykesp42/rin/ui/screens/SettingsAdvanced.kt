@@ -402,7 +402,7 @@ internal fun DataSourceGroup(
             title = "本地模式",
             description = if (settings.localMode) {
                 "直连学校接口，不依赖服务端" +
-                    if (settings.rosterName.isBlank()) "；要先填名单姓名" else ""
+                    if (top.sykesp42.rin.data.InternalGate.isOn && settings.rosterName.isBlank()) "；要先填名单姓名" else ""
             } else {
                 "开启后手机直接连学校，不经服务端"
             },
@@ -410,7 +410,7 @@ internal fun DataSourceGroup(
             onCheckedChange = { next -> vm.setLocalMode(next) },
             contentDescription = "本地模式"
         )
-        if (settings.localMode) {
+        if (settings.localMode && top.sykesp42.rin.data.InternalGate.isOn) {
             OutlinedTextField(
                 value = drafts.rosterName,
                 onValueChange = { drafts.rosterName = it },
@@ -480,10 +480,10 @@ private fun JwxtGroup(
         StatusNote(
             text = when {
                 settings.jwxtNeedsLogin ->
-                    "会话已过期，需重新过滑块；课表成绩仍可看缓存"
+                    "登录过期了，点「重新登录教务」恢复"
                 jwxtConnected && !hasCredential ->
-                    "已连接，仅存网页会话；填账号可自动续期"
-                jwxtConnected -> "已连接，按课表自动调度"
+                    "已连接 · 填了账号密码可以自动续期"
+                jwxtConnected -> "已连接"
                 else -> "未连接"
             },
             dotColor = if (jwxtConnected && hasCredential && !settings.jwxtNeedsLogin) colors.signal else colors.warning
@@ -546,7 +546,7 @@ private fun JwxtGroup(
             )
         }
         Text(
-            text = "手机直连教务，不绕过签到权限。",
+            text = "账号密码只保存在这台手机上，Rin 不会上传或发送。",
             color = colors.textSecondary,
             style = MaterialTheme.typography.labelSmall
         )
@@ -571,6 +571,8 @@ private fun JwxtGroup(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+        if (top.sykesp42.rin.data.InternalGate.isOn) {
             SuiSecondaryButton(
                 text = "用此姓名填名单匹配",
                 onClick = { vm.fillRosterNameFromJwxt() },
@@ -578,7 +580,7 @@ private fun JwxtGroup(
             )
         }
         Text(
-            text = "校外先登录 webvpn2.gdupt.edu.cn，滑块验证需人工完成。",
+            text = "校外时需要先登录 WebVPN。",
             color = colors.textSecondary,
             style = MaterialTheme.typography.bodySmall
         )

@@ -976,6 +976,17 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /**
+     * Manual 完整版 switch for activated devices: flips internalMode and the
+     * settings collector mirrors it into InternalGate. Devices that were never
+     * activated never see the switch (gate stays clean).
+     */
+    fun setInternalMode(next: Boolean) {
+        viewModelScope.launch {
+            container.settings.setInternalMode(next)
+        }
+    }
+
     /** Save the roster name and immediately re-check the current activity. */
     fun saveRosterNameAndRefresh(name: String) {
         viewModelScope.launch {

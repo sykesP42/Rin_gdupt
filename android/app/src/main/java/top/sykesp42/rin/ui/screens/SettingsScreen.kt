@@ -1467,6 +1467,8 @@ private fun SettingsConnectionContent(
     onOpenWeb: () -> Unit,
     onResetManual: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val activated = remember { AppContainer.get(context).licenseIdentity.secret().isNotBlank() }
     SettingsSubpage(
         title = "教务与数据",
         subtitle = "账号、数据来源和学校连接",
@@ -1487,6 +1489,24 @@ private fun SettingsConnectionContent(
                 drafts = drafts,
                 modifier = Modifier.padding(top = 24.dp)
             )
+        }
+        // Activated devices get a manual 完整版 switch; visibility keys on the
+        // stored device secret (not the current gate) so turning it off keeps
+        // the switch reachable for turning it back on.
+        if (top.sykesp42.rin.data.InternalGate.isOn || activated) {
+            item(key = "full-mode-switch") {
+                Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
+                    SectionHeader(title = "完整版")
+                    PaperSwitchRow(
+                        title = "完整版",
+                        description = "关闭后回到精简版，随时可以再打开",
+                        checked = settings.internalMode,
+                        onCheckedChange = { vm.setInternalMode(it) },
+                        contentDescription = "完整版",
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            }
         }
         item(key = "manual-reset") {
             Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {

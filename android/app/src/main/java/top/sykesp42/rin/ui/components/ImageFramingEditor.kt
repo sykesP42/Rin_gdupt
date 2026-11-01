@@ -32,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -110,11 +109,28 @@ fun ImageFramingEditor(
                 .clip(shape)
                 .background(Color.Black)
                 .pointerInput(bitmap) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        val next = (scale * zoom).coerceIn(1f, 3f)
-                        scale = next
-                        offsetX = (offsetX + pan.x / (size.width / 2f)).coerceIn(-1f, 1f)
-                        offsetY = (offsetY + pan.y / (size.height / 2f)).coerceIn(-1f, 1f)
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        // Anchor the zoom on the fingers: the image point under
+                        // the centroid stays put, then the drag applies 1:1.
+                        val zoomed = (scale * zoom).coerceIn(1f, 3f)
+                        val applied = zoomed / scale
+                        val base = maxOf(
+                            size.width / bitmap.width.toFloat(),
+                            size.height / bitmap.height.toFloat()
+                        )
+                        fun reaxis(oldBias: Float, oldOver: Float, newOver: Float, focal: Float, drag: Float): Float {
+                            if (newOver <= 0.5f) return 0f
+                            val t = oldBias * (oldOver / 2f)
+                            val moved = focal * (1f - applied) + t * applied + drag
+                            return (moved / (newOver / 2f)).coerceIn(-1f, 1f)
+                        }
+                        val overXOld = (bitmap.width * base * scale - size.width).coerceAtLeast(0f)
+                        val overYOld = (bitmap.height * base * scale - size.height).coerceAtLeast(0f)
+                        val overXNew = (bitmap.width * base * zoomed - size.width).coerceAtLeast(0f)
+                        val overYNew = (bitmap.height * base * zoomed - size.height).coerceAtLeast(0f)
+                        offsetX = reaxis(offsetX, overXOld, overXNew, centroid.x - size.width / 2f, pan.x)
+                        offsetY = reaxis(offsetY, overYOld, overYNew, centroid.y - size.height / 2f, pan.y)
+                        scale = zoomed
                     }
                 }
         ) {
@@ -122,12 +138,21 @@ fun ImageFramingEditor(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "构图预览",
                 contentScale = ContentScale.Crop,
-                alignment = BiasAlignment(offsetX, offsetY),
                 modifier = Modifier
                     .matchParentSize()
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
+                        // Translate in real pixels: bias ±1 == half the current
+                        // overflow on that axis, so the frame never shows gaps.
+                        val base = maxOf(
+                            size.width / bitmap.width.toFloat(),
+                            size.height / bitmap.height.toFloat()
+                        )
+                        val overX = (bitmap.width * base * scale - size.width).coerceAtLeast(0f) / 2f
+                        val overY = (bitmap.height * base * scale - size.height).coerceAtLeast(0f) / 2f
+                        translationX = offsetX * overX
+                        translationY = offsetY * overY
                     }
             )
             Canvas(Modifier.matchParentSize()) {
