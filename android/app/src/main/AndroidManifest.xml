@@ -28,6 +28,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".jwxt.JwxtLoginActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Rin"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
         <receiver
             android:name=".reminder.CourseReminderReceiver"
             android:exported="false" />

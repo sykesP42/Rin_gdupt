@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "top.sky2333.rin"
+    namespace = "top.sykesp42.rin"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "top.sky2333.rin"
+        applicationId = "top.sykesp42.rin"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -50,6 +50,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jsoup:jsoup:1.18.3")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
