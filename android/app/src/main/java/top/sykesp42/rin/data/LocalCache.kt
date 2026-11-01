@@ -7,9 +7,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * File cache for the locally-built week overview, so the splash screen and
- * the first frame can render before the settings flow arrives. Payloads are
- * stored with their build timestamp; retention is capped by count.
+ * File cache for JWXT data (schedule weeks / term courses / grade bundle).
+ * Stale-while-revalidate: the VM renders cached payloads instantly and
+ * refreshes from the network in the background, so the app stays usable
+ * offline and between session expiries. Payloads are stored with their
+ * fetch timestamp; retention is capped by count.
  */
 class LocalCache(private val context: Context) {
 
@@ -17,7 +19,7 @@ class LocalCache(private val context: Context) {
     data class Entry(val at: String, val payload: String)
 
     private val json = Json { ignoreUnknownKeys = true }
-    private val dir get() = java.io.File(context.filesDir, "schedule_cache")
+    private val dir get() = java.io.File(context.filesDir, "jwxt_cache")
 
     private fun file(name: String) = java.io.File(dir.apply { mkdirs() }, "$name.json")
 

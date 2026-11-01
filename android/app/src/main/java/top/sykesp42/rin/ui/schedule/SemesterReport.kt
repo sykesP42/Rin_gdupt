@@ -1,6 +1,7 @@
 package top.sykesp42.rin.ui.schedule
 
 import kotlin.math.roundToInt
+import top.sykesp42.rin.data.JwxtTermCourse
 import top.sykesp42.rin.data.ManualCourse
 
 /** One line of the semester report; `value` is already formatted for display. */
@@ -9,7 +10,7 @@ data class ReportRow(val label: String, val value: String)
 /** A headline number, split so the UI can set the unit in a smaller type. */
 data class ReportStat(val label: String, val value: String, val unit: String)
 
-/** One recurring teaching slot, flattened from the reader's own courses. */
+/** One recurring teaching slot, flattened from crawled courses and manual ones. */
 data class SemesterSlot(
     val courseName: String,
     val weekday: Int,
@@ -57,7 +58,25 @@ data class SemesterReport(
     val peakWeek: WeekLoad? get() = weeks.maxByOrNull { it.sessions }
 }
 
-fun semesterSlots(manualCourses: List<ManualCourse>): List<SemesterSlot> {
+/** Flattens crawled term courses plus manual courses into comparable slots. */
+fun semesterSlots(
+    courses: List<JwxtTermCourse>,
+    manualCourses: List<ManualCourse> = emptyList()
+): List<SemesterSlot> {
+    val crawled = courses.flatMap { course ->
+        course.slots.map { slot ->
+            SemesterSlot(
+                courseName = slot.courseName.ifBlank { course.courseName },
+                weekday = slot.weekday.coerceIn(1, 7),
+                firstWeek = slot.firstWeek.coerceAtLeast(1),
+                lastWeek = slot.lastWeek.coerceAtLeast(slot.firstWeek.coerceAtLeast(1)),
+                sections = sectionSpan(slot.sectionText),
+                location = slot.location.ifBlank { course.location },
+                firstSection = firstSection(slot.sectionText),
+                teacher = slot.teacher.ifBlank { course.teacher }
+            )
+        }
+    }
     val manual = manualCourses.map {
         val first = it.firstWeek.coerceAtLeast(1)
         SemesterSlot(
@@ -71,7 +90,9 @@ fun semesterSlots(manualCourses: List<ManualCourse>): List<SemesterSlot> {
             teacher = it.teacher
         )
     }
-    return manual
+    // JWXT can return the same weekly block more than once; counting those
+    // duplicates is what produced impossible "14 次早八" numbers.
+    return (crawled + manual)
         .filter { it.courseName.isNotBlank() }
         .distinctBy {
             listOf(

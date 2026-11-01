@@ -21,14 +21,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.first
 import top.sykesp42.rin.MainActivity
 import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.AppSettings
 import top.sykesp42.rin.data.CourseReminder
-import top.sykesp42.rin.ui.faces.NoticeFaces
-import top.sykesp42.rin.ui.faces.NoticeIcons
-import top.sykesp42.rin.ui.faces.NoticeSlot
+import top.sykesp42.rin.monitor.NoticeFaces
+import top.sykesp42.rin.monitor.NoticeIcons
+import top.sykesp42.rin.monitor.NoticeSlot
 
 /** Arms one exact one-off alarm; no service and no network are required. */
 object CourseReminderScheduler {
@@ -93,7 +92,7 @@ object CourseReminderCalendar {
             .putExtra(CalendarContract.Events.EVENT_LOCATION, reminder.location)
             .putExtra(
                 CalendarContract.Events.DESCRIPTION,
-                "Rin 课程提醒 · 提前 ${reminder.leadMinutes} 分钟"
+                "Rin+ 课程提醒 · 提前 ${reminder.leadMinutes} 分钟"
             )
             .putExtra(CalendarContract.Events.HAS_ALARM, 1)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -114,7 +113,7 @@ class CourseReminderReceiver : BroadcastReceiver() {
                 val container = AppContainer.get(context)
                 val reminder = container.courseReminders.payload.value.reminders.firstOrNull { it.id == id }
                 if (reminder != null) {
-                    val settings = container.settings.settings.first()
+                    val settings = container.settings.current()
                     if (reminder.alarm) prepareAlarmAudio(context, reminder, settings)
                     CourseReminderNotifier.show(context, reminder, settings)
                     container.courseReminders.remove(id)
@@ -218,12 +217,11 @@ object CourseReminderNotifier {
         val vibrate = settings.reminderVibrate ||
             (reminder.forceUnmute && reminder.vibrate)
         val channel = ensureChannel(context, settings, vibrate)
-        val text = buildList {
-            reminder.startTime.takeIf { it.isNotBlank() }?.let(::add)
-            reminder.location.takeIf { it.isNotBlank() }?.let(::add)
-            add("提前 ${reminder.leadMinutes} 分钟")
-            if (reminder.signReminder) add("记得留意签到")
-        }.joinToString(" · ")
+        val text = listOf(
+            reminder.startTime.takeIf { it.isNotBlank() },
+            reminder.location.takeIf { it.isNotBlank() },
+            "提前 ${reminder.leadMinutes} 分钟"
+        ).filterNotNull().joinToString(" · ")
         val open = PendingIntent.getActivity(
             context,
             reminder.id.hashCode(),
@@ -233,9 +231,7 @@ object CourseReminderNotifier {
         )
         val builder = Notification.Builder(context, channel)
             .setSmallIcon(top.sykesp42.rin.R.drawable.ic_stat_rin_v3)
-            .setContentTitle(
-                (if (reminder.signReminder) "签到提醒" else "课程提醒") + " · ${reminder.courseName}"
-            )
+            .setContentTitle("课程提醒 · ${reminder.courseName}")
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setAutoCancel(true)
@@ -245,7 +241,7 @@ object CourseReminderNotifier {
         if (settings.noticeInShade) {
             runCatching {
                 builder.setLargeIcon(
-                    NoticeIcons.largeIcon(context, NoticeFaces.face(NoticeSlot.REMINDER))
+                    NoticeIcons.largeIcon(context, NoticeFaces.face(NoticeSlot.CLASS_REMINDER))
                 )
             }
         }

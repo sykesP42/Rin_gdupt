@@ -12,8 +12,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * The only credential persisted: the campus session cookie. It goes through
- * AndroidKeyStore AES-GCM; no plaintext ever reaches disk.
+ * The only credentials persisted: the session cookie and the JWXT account
+ * password (needed for silent renewal). Both go through AndroidKeyStore
+ * AES-GCM; no plaintext ever reaches disk.
  */
 data class SessionCookie(val name: String, val value: String)
 

@@ -6,7 +6,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import top.sykesp42.rin.ui.schedule.campusZone
+import top.sykesp42.rin.ui.schedule.schoolZone
 
 private val clockFormat = DateTimeFormatter.ofPattern("HH:mm", Locale.CHINA)
 private val historyFormat = DateTimeFormatter.ofPattern("MM-dd HH:mm", Locale.CHINA)
@@ -27,9 +27,12 @@ fun formatCountdown(until: Instant?, now: Instant): String {
     }
 }
 
-/** Campus times are independent of the phone's own timezone. */
-fun formatClock(instant: Instant, zone: ZoneId = campusZone): String =
+/** Campus times are school times, independent of the phone's own timezone. */
+fun formatClock(instant: Instant, zone: ZoneId = schoolZone): String =
     clockFormat.withZone(zone).format(instant)
+
+fun formatHistoryTime(instant: Instant, zone: ZoneId = schoolZone): String =
+    historyFormat.withZone(zone).format(instant)
 
 fun formatDateLine(date: LocalDate): String {
     val weekday = weekdays[date.dayOfWeek.value - 1]

@@ -58,7 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import top.sykesp42.rin.data.PetWeather
 import top.sykesp42.rin.data.PetWeatherSnapshot
-import top.sykesp42.rin.ui.schedule.campusZone
+import top.sykesp42.rin.ui.schedule.schoolZone
 import top.sykesp42.rin.ui.theme.HeroStyle
 
 private const val WEATHER_FRESH_MS = 3 * 60 * 60_000L
@@ -121,7 +121,7 @@ internal fun rinSpotIndex(count: Int, event: PetEvent, hour: Int, rotation: Int)
     if (count <= 1) return 0
     val night = hour >= 23 || hour < 6
     return when {
-        event == PetEvent.REMINDER || event == PetEvent.CHEER -> count - 1
+        event == PetEvent.SIGN_READY || event == PetEvent.SIGN_SUCCESS -> count - 1
         event == PetEvent.RUSH_TO_CLASS -> 0
         night -> count - 1
         hour in 6..8 -> 0
@@ -152,11 +152,11 @@ fun PetPerch(
     val context = LocalContext.current
     val view = LocalView.current
     val store = remember(context) { PetSpriteStore(context.applicationContext) }
-    var hour by remember { mutableIntStateOf(ZonedDateTime.now(campusZone).hour) }
+    var hour by remember { mutableIntStateOf(ZonedDateTime.now(schoolZone).hour) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(60_000)
-            hour = ZonedDateTime.now(campusZone).hour
+            hour = ZonedDateTime.now(schoolZone).hour
         }
     }
     val freshWeather = weather
@@ -247,7 +247,7 @@ fun PetPerch(
         val hop = remember { Animatable(0f) }
         LaunchedEffect(petContext.event, motion, petPx) {
             hop.snapTo(0f)
-            if (!motion || petContext.event != PetEvent.CHEER) return@LaunchedEffect
+            if (!motion || petContext.event != PetEvent.SIGN_SUCCESS) return@LaunchedEffect
             hop.animateTo(-petPx * 0.16f, tween(150))
             hop.animateTo(0f, spring(dampingRatio = 0.42f, stiffness = 360f))
         }

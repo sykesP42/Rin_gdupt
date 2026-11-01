@@ -90,13 +90,12 @@ import top.sykesp42.rin.ui.schedule.clampCanvasOffset
 import top.sykesp42.rin.ui.schedule.clockToMinutes
 import top.sykesp42.rin.ui.schedule.computeCanvasFitScale
 import top.sykesp42.rin.ui.schedule.parseSections
-import top.sykesp42.rin.ui.schedule.sectionBounds
 import top.sykesp42.rin.ui.theme.LocalAnimationsEnabled
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.LocalVisualStyle
 import top.sykesp42.rin.ui.theme.courseAccent
 import top.sykesp42.rin.ui.theme.courseTint
-import top.sykesp42.rin.ui.theme.RinColors
+import top.sykesp42.rin.ui.theme.SuiSignColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -138,7 +137,7 @@ fun WeekTable(
     rowHeight: Dp = ROW_H,
     canvasMode: Boolean = false
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val todayString = today?.toString()
     val byWeekday = remember(days) { days.associateBy { it.weekday } }
     val currentSwipe by rememberUpdatedState(onSwipeWeek)
@@ -190,7 +189,7 @@ fun WeekTable(
 private fun WeekHeader(
     byWeekday: Map<Int, ApiScheduleDay>,
     todayString: String?,
-    colors: RinColors
+    colors: SuiSignColors
 ) {
     val labels = listOf("一", "二", "三", "四", "五", "六", "日")
     Row(modifier = Modifier.fillMaxWidth()) {
@@ -254,7 +253,7 @@ private fun WeekBody(
     byWeekday: Map<Int, ApiScheduleDay>,
     todayString: String?,
     nowMinutes: Int,
-    colors: RinColors,
+    colors: SuiSignColors,
     rowHeight: Dp,
     onCourseTap: (ApiScheduleEvent) -> Unit,
     canvasMode: Boolean,
@@ -316,7 +315,7 @@ private fun WeekBody(
 }
 
 @Composable
-private fun SectionRail(colors: RinColors, rowHeight: Dp) {
+private fun SectionRail(colors: SuiSignColors, rowHeight: Dp) {
     Column(modifier = Modifier.width(RAIL_W)) {
         for (section in 1..SECTIONS) {
             val start = sectionBounds[section]?.first ?: 0
@@ -358,7 +357,7 @@ private fun DayColumn(
     events: List<ApiScheduleEvent>,
     isToday: Boolean,
     nowMinutes: Int,
-    colors: RinColors,
+    colors: SuiSignColors,
     dark: Boolean,
     rowHeight: Dp,
     onCourseTap: (ApiScheduleEvent) -> Unit,
@@ -414,7 +413,7 @@ private fun CourseCell(
     span: GridSpan,
     isNow: Boolean,
     isPast: Boolean,
-    colors: RinColors,
+    colors: SuiSignColors,
     dark: Boolean,
     height: Dp,
     onTap: () -> Unit
@@ -640,7 +639,7 @@ fun WeekTableCanvas(
     shareFormat: ShareFormat = ShareFormat.ROWS,
     rowHeight: Dp = ROW_H
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val palette = ExportPalette(
@@ -657,22 +656,6 @@ fun WeekTableCanvas(
     var contentSize by remember { mutableStateOf(IntSize.Zero) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
-
-    // Ten 72dp rows are taller than a whole phone page, so a fixed row height
-    // always ended in fit-scale shrinking the grid back into the corner. Size
-    // the rows to the measured viewport instead: the table then fills the page
-    // at scale 1 — same behaviour the fixed height only produced on tablets.
-    val density = LocalDensity.current
-    val effectiveRowHeight = remember(viewport, rowHeight) {
-        if (viewport.height <= 0) {
-            rowHeight
-        } else {
-            val viewportDp = with(density) { viewport.height.toDp() }
-            // WeekHeader + trailing spacer above and below the section rows.
-            val available = viewportDp - 64.dp - 18.dp
-            maxOf(44.dp, minOf(rowHeight, available / SECTIONS))
-        }
-    }
 
     val fit = remember(contentSize, viewport) {
         computeCanvasFitScale(
@@ -834,7 +817,7 @@ fun WeekTableCanvas(
                     today = today,
                     nowMinutes = nowMinutes,
                     onCourseTap = onCourseTap,
-                    rowHeight = effectiveRowHeight,
+                    rowHeight = rowHeight,
                     canvasMode = true,
                     // Recorded before the transform, so a share always shows the
                     // whole week at fit instead of whichever corner was zoomed.
@@ -872,7 +855,7 @@ private fun CanvasCornerControls(
     onShare: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = modifier
             .clip(CircleShape)
@@ -947,3 +930,15 @@ private fun spanCoversMinute(span: GridSpan, nowMinutes: Int): Boolean {
     return start <= nowMinutes && nowMinutes <= end
 }
 
+internal val sectionBounds: Map<Int, Pair<Int, Int>> = mapOf(
+    1 to Pair(8 * 60, 8 * 60 + 45),
+    2 to Pair(8 * 60 + 55, 9 * 60 + 40),
+    3 to Pair(10 * 60, 10 * 60 + 45),
+    4 to Pair(10 * 60 + 55, 11 * 60 + 40),
+    5 to Pair(14 * 60 + 30, 15 * 60 + 15),
+    6 to Pair(15 * 60 + 25, 16 * 60 + 10),
+    7 to Pair(16 * 60 + 20, 17 * 60),
+    8 to Pair(17 * 60, 17 * 60 + 50),
+    9 to Pair(19 * 60 + 40, 20 * 60 + 25),
+    10 to Pair(20 * 60 + 35, 21 * 60 + 20)
+)

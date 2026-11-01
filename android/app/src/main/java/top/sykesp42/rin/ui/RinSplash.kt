@@ -84,7 +84,7 @@ import top.sykesp42.rin.data.ApiScheduleOverview
 import top.sykesp42.rin.data.LocalCache
 import top.sykesp42.rin.ui.schedule.nowMinutesAt
 import top.sykesp42.rin.ui.schedule.todayAnchor
-import top.sykesp42.rin.ui.schedule.todayAtCampusClock
+import top.sykesp42.rin.ui.schedule.todayAtSchoolClock
 import top.sykesp42.rin.ui.theme.LocalAnimationsEnabled
 import top.sykesp42.rin.ui.theme.RinTokens
 
@@ -134,7 +134,7 @@ private val DarkSplashPalette = SplashPalette(
 
 private val WelcomeLines = listOf(
     "今天也从容一点。",
-    "上课和提醒交给 Rin，时间留给自己。",
+    "签到交给 Rin，时间留给自己。",
     "早八也能慢慢来。",
     "不慌，时间还够。",
     "今天也要好好上课。",
@@ -504,7 +504,7 @@ private fun ScheduleBlock(
     palette: SplashPalette
 ) {
     val fallbackDateLabel = remember {
-        todayAtCampusClock().format(DateTimeFormatter.ofPattern("M月d日 · E", Locale.CHINA))
+        todayAtSchoolClock().format(DateTimeFormatter.ofPattern("M月d日 · E", Locale.CHINA))
     }
     val dateLabel = (state as? SplashScheduleState.Ready)?.dateLabel ?: fallbackDateLabel
     Column(
@@ -686,14 +686,14 @@ private fun loadTodaySchedule(context: Context): SplashScheduleState {
         LocalCache(context).read("schedule_week0", ApiScheduleOverview.serializer())?.second
     }.getOrNull() ?: return SplashScheduleState.Missing
 
-    val deviceDay = todayAtCampusClock().toString()
+    val deviceDay = todayAtSchoolClock().toString()
     val events = overview.today.ifEmpty {
         overview.days.firstOrNull { it.date == overview.date }?.events
             ?: overview.days.firstOrNull { it.date == deviceDay }?.events
             ?: emptyList()
     }
     if (events.isEmpty()) return SplashScheduleState.Empty
-    val scheduleDate = todayAnchor(overview.date) ?: todayAtCampusClock()
+    val scheduleDate = todayAnchor(overview.date) ?: todayAtSchoolClock()
     val dateLabel = scheduleDate.format(DateTimeFormatter.ofPattern("M月d日 · E", Locale.CHINA))
 
     val sorted = events.sortedBy { startMinutes(it.startTime) }

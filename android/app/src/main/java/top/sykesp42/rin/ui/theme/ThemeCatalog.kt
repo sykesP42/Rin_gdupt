@@ -65,7 +65,7 @@ data class ThemeSpec(
     val surface: SurfaceStyle,
     val hero: HeroStyle,
     val seed: ThemeSeed? = null,
-    val fixedColors: RinColors? = null,
+    val fixedColors: SuiSignColors? = null,
     @DrawableRes val art: Int? = null,
     @DrawableRes val artThumb: Int? = null,
     val artFocus: Float = 0.28f,
@@ -98,7 +98,7 @@ object ThemeCatalog {
             decoration = DecorationStyle.SKY_GRID,
             surface = SurfaceStyle.PAPER,
             hero = HeroStyle.COVER,
-            fixedColors = SkyRinColors,
+            fixedColors = SkySuiSignColors,
             art = R.drawable.rin_manual_sky,
             artThumb = R.drawable.theme_classic_sky_thumb,
             artFocus = 0.46f
@@ -117,7 +117,7 @@ object ThemeCatalog {
             decoration = DecorationStyle.DIARY,
             surface = SurfaceStyle.PAPER,
             hero = HeroStyle.BOOK,
-            fixedColors = BookRinColors
+            fixedColors = BookSuiSignColors
         ),
         ThemeSpec(
             mode = ThemeMode.CRYSTAL,
@@ -133,7 +133,7 @@ object ThemeCatalog {
             decoration = DecorationStyle.SKY_GRID,
             surface = SurfaceStyle.GLASS,
             hero = HeroStyle.CRYSTAL,
-            fixedColors = CrystalRinColors
+            fixedColors = CrystalSuiSignColors
         ),
         ThemeSpec(
             mode = ThemeMode.RADIO,
@@ -149,7 +149,7 @@ object ThemeCatalog {
             decoration = DecorationStyle.CIRCUIT,
             surface = SurfaceStyle.OUTLINE,
             hero = HeroStyle.COVER,
-            fixedColors = RadioRinColors,
+            fixedColors = RadioSuiSignColors,
             art = R.drawable.rin_manual_night,
             artThumb = R.drawable.theme_classic_radio_thumb,
             artFocus = 0.46f
@@ -404,10 +404,10 @@ object ThemeCatalog {
         AccentPreset("ink", "朱墨", "#A63228")
     )
 
-    fun colorsFor(spec: ThemeSpec): RinColors =
+    fun colorsFor(spec: ThemeSpec): SuiSignColors =
         spec.fixedColors ?: deriveColors(requireNotNull(spec.seed))
 
-    fun deriveColors(seed: ThemeSeed): RinColors {
+    fun deriveColors(seed: ThemeSeed): SuiSignColors {
         val dark = seed.bg.luminance() < 0.42f
         var text = seed.ink
         repeat(3) { text = ensureContrast(ensureContrast(text, seed.card, 7f), seed.bg, 7f) }
@@ -429,7 +429,7 @@ object ThemeCatalog {
             warning = ensureContrast(ensureContrast(warning, seed.card, 4.5f), seed.bg, 4.5f)
             warning = ensureContrast(ensureContrast(warning, raised, 4.5f), warm, 4.5f)
         }
-        return RinColors(
+        return SuiSignColors(
             canvas = seed.bg,
             surface = seed.card,
             surfaceRaised = raised,
@@ -447,7 +447,7 @@ object ThemeCatalog {
         )
     }
 
-    fun withAccent(colors: RinColors, hex: String?): RinColors {
+    fun withAccent(colors: SuiSignColors, hex: String?): SuiSignColors {
         val raw = parseHex(hex) ?: return colors
         var signal = raw
         repeat(2) {
@@ -466,7 +466,7 @@ object ThemeCatalog {
     }
 
     fun typographyFor(style: TypeStyle): Typography = when (style) {
-        TypeStyle.SANS -> RinTypography
+        TypeStyle.SANS -> SuiSignTypography
         TypeStyle.SERIF -> serifTypography
         TypeStyle.EDITORIAL -> editorialTypography
         TypeStyle.MONO -> monoTypography
@@ -476,7 +476,7 @@ object ThemeCatalog {
     }
 
     fun shapesFor(style: ShapeStyle): Shapes = when (style) {
-        ShapeStyle.SOFT -> RinShapes
+        ShapeStyle.SOFT -> SuiSignShapes
         ShapeStyle.SHARP -> sharpShapes
         ShapeStyle.CRYSTAL -> crystalShapes
         ShapeStyle.PILL -> pillShapes
@@ -539,7 +539,7 @@ object ThemeCatalog {
         return target
     }
 
-    private val serifTypography = RinTypography.copy(
+    private val serifTypography = SuiSignTypography.copy(
         titleLarge = TextStyle(
             fontFamily = FontFamily.Serif,
             fontWeight = FontWeight.SemiBold,
@@ -593,7 +593,7 @@ object ThemeCatalog {
         )
     )
 
-    private val monoTypography = RinTypography.copy(
+    private val monoTypography = SuiSignTypography.copy(
         titleLarge = TextStyle(
             fontFamily = FontFamily.Serif,
             fontWeight = FontWeight.SemiBold,
@@ -648,7 +648,7 @@ object ThemeCatalog {
         )
     )
 
-    private val roundTypography = RinTypography.copy(
+    private val roundTypography = SuiSignTypography.copy(
         headlineMedium = TextStyle(
             fontFamily = FontFamily.Cursive,
             fontWeight = FontWeight.Bold,

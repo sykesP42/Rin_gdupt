@@ -36,7 +36,7 @@ import top.sykesp42.rin.ui.components.SectionHeader
 import top.sykesp42.rin.ui.components.SuiPrimaryButton
 import top.sykesp42.rin.ui.components.SuiSecondaryButton
 import top.sykesp42.rin.ui.profile.Profile
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.components.suiTextFieldColors
 
 internal fun profileSummary(settings: AppSettings, user: User): String {
@@ -56,7 +56,7 @@ internal fun SettingsProfileContent(
     user: User,
     onBack: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val context = LocalContext.current
     val realName = user.displayName.ifBlank { user.username }
     val effective = Identity.displayName(settings, realName)
@@ -152,7 +152,7 @@ internal fun SettingsProfileContent(
                 SectionHeader(title = "隐私")
                 PaperSwitchRow(
                     title = "隐藏个人信息",
-                    description = "真名与个人信息不再出现在界面和分享里",
+                    description = "真名与学号不再出现在界面和分享里",
                     checked = settings.hidePersonal,
                     onCheckedChange = vm::setHidePersonal,
                     contentDescription = "隐藏个人信息",

@@ -8,7 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 
 @Composable
-fun RinTheme(
+fun SuiSignTheme(
     mode: ThemeMode = ThemeMode.default,
     resolvedDark: Boolean = isSystemInDarkTheme(),
     animationsEnabled: Boolean = true,
@@ -83,7 +83,7 @@ fun RinTheme(
         )
     }
     CompositionLocalProvider(
-        LocalRinColors provides colors,
+        LocalSuiSignColors provides colors,
         LocalVisualStyle provides appearance,
         LocalAnimationsEnabled provides animationsEnabled,
         top.sykesp42.rin.ui.components.LocalCourseOverrides provides courseOverrides

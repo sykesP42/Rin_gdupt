@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Immutable
-data class RinColors(
+data class SuiSignColors(
     val canvas: Color,
     val surface: Color,
     val surfaceRaised: Color,
@@ -29,7 +29,7 @@ data class RinColors(
     val warm: Color
 )
 
-val DarkRinColors = RinColors(
+val DarkSuiSignColors = SuiSignColors(
     canvas = DarkTokens.canvas,
     surface = DarkTokens.surface,
     surfaceRaised = DarkTokens.surfaceRaised,
@@ -46,7 +46,7 @@ val DarkRinColors = RinColors(
     warm = DarkTokens.warm
 )
 
-val RinRinColors = RinColors(
+val RinSuiSignColors = SuiSignColors(
     canvas = RinTokens.canvas,
     surface = RinTokens.surface,
     surfaceRaised = RinTokens.surfaceRaised,
@@ -63,7 +63,7 @@ val RinRinColors = RinColors(
     warm = RinTokens.warm
 )
 
-val LightRinColors = RinColors(
+val LightSuiSignColors = SuiSignColors(
     canvas = LightTokens.canvas,
     surface = LightTokens.surface,
     surfaceRaised = LightTokens.surfaceRaised,
@@ -80,7 +80,7 @@ val LightRinColors = RinColors(
     warm = LightTokens.warm
 )
 
-val SakuraRinColors = RinColors(
+val SakuraSuiSignColors = SuiSignColors(
     canvas = SakuraTokens.canvas,
     surface = SakuraTokens.surface,
     surfaceRaised = SakuraTokens.surfaceRaised,
@@ -97,7 +97,7 @@ val SakuraRinColors = RinColors(
     warm = SakuraTokens.warm
 )
 
-val MangaRinColors = RinColors(
+val MangaSuiSignColors = SuiSignColors(
     canvas = MangaTokens.canvas,
     surface = MangaTokens.surface,
     surfaceRaised = MangaTokens.surfaceRaised,
@@ -114,7 +114,7 @@ val MangaRinColors = RinColors(
     warm = MangaTokens.warm
 )
 
-val NeonRinColors = RinColors(
+val NeonSuiSignColors = SuiSignColors(
     canvas = NeonTokens.canvas,
     surface = NeonTokens.surface,
     surfaceRaised = NeonTokens.surfaceRaised,
@@ -131,13 +131,13 @@ val NeonRinColors = RinColors(
     warm = NeonTokens.warm
 )
 
-val LocalRinColors = staticCompositionLocalOf { RinRinColors }
+val LocalSuiSignColors = staticCompositionLocalOf { RinSuiSignColors }
 val LocalAnimationsEnabled = staticCompositionLocalOf { true }
 
 private val uiFont = FontFamily.SansSerif
 private val displayFont = FontFamily.Serif
 
-val RinTypography = Typography(
+val SuiSignTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = displayFont,
         fontWeight = FontWeight.SemiBold,
@@ -230,7 +230,7 @@ val RinTypography = Typography(
     )
 )
 
-val RinShapes = androidx.compose.material3.Shapes(
+val SuiSignShapes = androidx.compose.material3.Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(18.dp),
@@ -253,7 +253,7 @@ object Spacing {
  * Material You dynamic palette mapped onto the paper tokens (Android 12+).
  * The wallpaper seed drives the ink/signal roles; the paper structure stays.
  */
-fun monetRinColors(scheme: androidx.compose.material3.ColorScheme): RinColors = RinColors(
+fun monetSuiSignColors(scheme: androidx.compose.material3.ColorScheme): SuiSignColors = SuiSignColors(
     canvas = scheme.background,
     surface = scheme.surfaceContainerLow,
     surfaceRaised = scheme.surfaceContainer,

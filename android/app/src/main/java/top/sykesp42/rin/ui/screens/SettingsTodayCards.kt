@@ -24,7 +24,7 @@ import androidx.compose.foundation.lazy.items
 import top.sykesp42.rin.data.AppSettings
 import top.sykesp42.rin.ui.today.TodayCardId
 import top.sykesp42.rin.ui.today.TodayCards
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 /** Every Today card can be switched off and moved without touching code. */
 @Composable
@@ -35,7 +35,7 @@ internal fun SettingsTodayCardsContent(
     onMove: (TodayCardId, Int) -> Unit,
     onReset: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val order = TodayCards.ordered(settings)
     val enabled = TodayCards.enabled(settings)
     SettingsSubpage(
@@ -58,7 +58,7 @@ internal fun SettingsTodayCardsContent(
         }
         item(key = "hint") {
             Text(
-                text = "顶部 Rin 问候固定；其余卡片可在此关闭或上下移动。",
+                text = "签到消息固定在顶部；其余卡片可在此关闭或上下移动。",
                 color = colors.textSecondary,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(bottom = 6.dp)
@@ -89,7 +89,7 @@ private fun TodayCardSettingRow(
     onUp: () -> Unit,
     onDown: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(
         modifier = Modifier
             .fillMaxWidth()

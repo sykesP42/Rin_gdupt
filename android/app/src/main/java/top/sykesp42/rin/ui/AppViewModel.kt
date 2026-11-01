@@ -1,128 +1,124 @@
 package top.sykesp42.rin.ui
 
-import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import java.time.Duration
+import java.time.Instant
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import top.sykesp42.rin.data.ApiScheduleEvent
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import top.sykesp42.rin.auto.CalibrationRunner
+import top.sykesp42.rin.data.ApiClient
+import top.sykesp42.rin.data.ApiError
+import top.sykesp42.rin.data.MonitorApi
+import top.sykesp42.rin.data.ApiRoom
 import top.sykesp42.rin.data.ApiScheduleOverview
+import top.sykesp42.rin.data.CampusNewsItem
 import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.AppSettings
-import top.sykesp42.rin.data.CourseOverride
-import top.sykesp42.rin.data.CourseReminder
-import top.sykesp42.rin.data.JwxtCalendarDay
-import top.sykesp42.rin.data.JwxtExam
-import top.sykesp42.rin.data.JwxtFreeRoom
-import top.sykesp42.rin.data.JwxtGrade
-import top.sykesp42.rin.data.JwxtTermCourse
-import top.sykesp42.rin.data.ManualCourse
-import top.sykesp42.rin.data.ManualExam
-import top.sykesp42.rin.data.ManualMove
-import top.sykesp42.rin.data.ManualTodo
-import top.sykesp42.rin.data.ReminderPrefs
-import top.sykesp42.rin.data.buildWeekOverview
-import top.sykesp42.rin.data.currentWeekNumber
-import top.sykesp42.rin.data.defaultTermStart
-import top.sykesp42.rin.data.LocalJwxtApi
-import top.sykesp42.rin.data.SessionCookie
-import top.sykesp42.rin.reminder.CourseReminderScheduler
-import top.sykesp42.rin.ui.faces.NoticeFaces
-import top.sykesp42.rin.ui.faces.NoticeIcon
-import top.sykesp42.rin.ui.faces.NoticeSlot
-import top.sykesp42.rin.ui.profile.Profile
-import top.sykesp42.rin.ui.schedule.ROOM_SLOTS
-import top.sykesp42.rin.ui.schedule.RoomSlot
-import top.sykesp42.rin.ui.schedule.campusZone
-import top.sykesp42.rin.ui.schedule.isRoomFree
-import top.sykesp42.rin.ui.schedule.normalizeRoomName
-import top.sykesp42.rin.ui.schedule.nowMinutesAt
-import top.sykesp42.rin.ui.schedule.roomSlotAt
-import top.sykesp42.rin.ui.schedule.todayAtCampusClock
-import top.sykesp42.rin.ui.schedule.weekNumberFor
-import top.sykesp42.rin.ui.today.TodayCardId
+import top.sykesp42.rin.data.HistoryEvent
+import top.sykesp42.rin.data.HistoryKind
+import top.sykesp42.rin.data.JwxtCalendar
+import top.sykesp42.rin.data.JwxtClassroom
+import top.sykesp42.rin.data.LicenseApiException
+import top.sykesp42.rin.data.collectLicenseDeviceInfo
+import top.sykesp42.rin.data.PetWeatherSnapshot
+import top.sykesp42.rin.data.RosterSnapshot
+import top.sykesp42.rin.data.appVersionName
+import top.sykesp42.rin.data.TodayScheduleSnapshot
+import top.sykesp42.rin.ui.schedule.diffSchedule
+import top.sykesp42.rin.data.suggestClassroomCodes
+import top.sykesp42.rin.data.verifiedRoomCode
+import top.sykesp42.rin.data.User
+import top.sykesp42.rin.monitor.MonitorEngine
+import top.sykesp42.rin.handoff.HandoffRuntime
+import top.sykesp42.rin.monitor.MonitorRuntime
+import top.sykesp42.rin.monitor.MonitorService
+import top.sykesp42.rin.monitor.MonitorView
+import top.sykesp42.rin.monitor.NoticeFaces
+import top.sykesp42.rin.monitor.NoticeIcon
+import top.sykesp42.rin.monitor.NoticeSlot
+import top.sykesp42.rin.monitor.REASON_WAKE
+import top.sykesp42.rin.domain.SignAccessApplyOutcome
+import top.sykesp42.rin.domain.SignAccessLevel
+import top.sykesp42.rin.domain.SignAccessState
+import top.sykesp42.rin.domain.signAccessFromCache
+import top.sykesp42.rin.domain.signAccessFromRemote
+import top.sykesp42.rin.ui.theme.ThemeMode
 import top.sykesp42.rin.ui.today.TodayCards
+
+sealed interface AuthState {
+    data object Loading : AuthState
+    data class LoggedOut(val reason: String = "") : AuthState
+    data class LoggedIn(val user: User) : AuthState
+}
+
+data class LoginUiState(
+    val busy: Boolean = false,
+    val error: String = ""
+)
+
+/** A learned classroom→code pair, surfaced on Today for temporary classes. */
+data class RoomShortcut(val name: String, val code: String)
+
+data class TodayUiState(
+    val view: MonitorView? = null,
+    val viewReceivedAt: Instant? = null,
+    val cachedRoster: RosterSnapshot? = null,
+    val running: Boolean = false,
+    val stopAt: Instant? = null,
+    val loading: Boolean = false,
+    val errorCode: String = "",
+    val errorMessage: String = "",
+    val manualCode: String = "",
+    val monitorEnabled: Boolean = false
+)
 
 data class ScheduleUiState(
     val overview: ApiScheduleOverview? = null,
-    val loading: Boolean = true,
-    val currentWeek: Int = 0,
-    val termStart: String = "",
-    val warning: String? = null,
-    // Cache footnote support, same as the full client: a stale read is still
-    // useful and must say when it was taken.
+    val jwxtConfigured: Boolean = true,
+    val loading: Boolean = false,
+    val error: String = "",
     val fromCache: Boolean = false,
     val cachedAt: String = "",
+    val currentWeek: Int = 0
+)
+
+data class SearchUiState(
+    val query: String = "",
+    val rooms: List<ApiRoom> = emptyList(),
+    val loading: Boolean = false,
+    val searched: Boolean = false,
     val error: String = ""
 )
 
-data class CourseMeeting(
-    val weekday: Int,
-    val sectionText: String,
-    val firstWeek: Int,
-    val lastWeek: Int,
-    val location: String
+data class ClassroomCatalogUiState(
+    val loading: Boolean = false,
+    val total: Int = 0,
+    val campuses: List<String> = emptyList(),
+    val selectedCampus: String = "",
+    val refreshedAt: String = "",
+    val error: String = "",
+    val rooms: List<ApiRoom> = emptyList()
 )
 
-data class CourseDetailUiState(
-    val open: Boolean = false,
-    val courseName: String = "",
-    val teacher: String = "",
-    val location: String = "",
-    val sectionText: String = "",
-    val weekday: Int = 0,
-    val firstWeek: Int = 1,
-    val lastWeek: Int = 20,
-    val alias: String = "",
-    val colorIndex: Int = 0,
-    val meetings: List<CourseMeeting> = emptyList()
-)
-
-/** One teaching block of a room, as the school answers it. */
-data class RoomSlotState(
-    val slot: RoomSlot,
-    // null = the school has no occupancy answer for this room in this block.
-    val free: Boolean?
-)
-
-/**
- * The room helper's detail: what the school knows about one room today plus
- * whatever the local timetable can add ("your class is here at 14:30").
- */
-data class RoomDetailUiState(
-    val roomName: String = "",
-    val campus: String = "",
-    val building: String = "",
-    val area: String = "",
-    val capacity: Int = 0,
-    val slots: List<RoomSlotState> = emptyList(),
-    val loading: Boolean = true,
-    val myCourses: List<String> = emptyList(),
-    val alternatives: List<String> = emptyList(),
-    val error: String = ""
-)
-
-/**
- * 校历 state, same shape as the full client's so the calendar screens port over
- * unchanged: loading/error/term plus the flat day list.
- */
 data class CalendarUiState(
     val loading: Boolean = false,
-    val days: List<JwxtCalendarDay> = emptyList(),
+    val days: List<top.sykesp42.rin.data.JwxtCalendarDay> = emptyList(),
     val term: String = "",
     val termLabel: String = "",
     val error: String = "",
@@ -130,938 +126,2379 @@ data class CalendarUiState(
     val cachedAt: String = ""
 )
 
-/**
- * 校务 page state: the room helper's free-room answer for one day + block,
- * plus the read-only academic lists (exams, grades, calendar) on the same page.
- */
-data class AcademicUiState(
-    val day: LocalDate = LocalDate.now(campusZone),
-    val slot: RoomSlot = ROOM_SLOTS.first(),
-    val week: Int = 0,
-    val rooms: List<JwxtFreeRoom> = emptyList(),
-    val campus: String = "",
+data class CampusNewsUiState(
+    val loading: Boolean = false,
+    val items: List<top.sykesp42.rin.data.CampusNewsItem> = emptyList(),
+    val error: String = "",
+    val fetchedAt: String = ""
+)
+
+data class HistoryUiState(
+    val events: List<HistoryEvent> = emptyList(),
+    val loading: Boolean = false
+)
+
+data class SignQrState(
+    val loading: Boolean = false,
+    val png: ByteArray? = null,
+    val fetchedAt: Instant? = null,
+    val type: String = "",
+    val refreshSeconds: Int = 0,
+    val effectiveEnd: Instant? = null,
+    val error: String = ""
+)
+
+data class AttendanceUiState(
+    val records: List<top.sykesp42.rin.data.AttendanceRecord> = emptyList(),
+    val courses: List<top.sykesp42.rin.data.CourseAttendance> = emptyList(),
+    val loaded: Boolean = false
+)
+
+data class SettingsUiState(
+    val threshold: Int = 10,
+    val minThreshold: Int = 0,
+    val maxThreshold: Int = 30,
+    val thresholdLoading: Boolean = false,
+    val savingThreshold: Boolean = false,
+    val thresholdError: String = ""
+)
+
+sealed interface CalibrationUiState {
+    data object Idle : CalibrationUiState
+    data object Running : CalibrationUiState
+    data class Done(val ok: Boolean, val text: String) : CalibrationUiState
+}
+
+data class CourseDetailUiState(
+    val courseName: String = "",
+    val assessMode: String = "",
+    val entries: List<top.sykesp42.rin.data.JwxtWeekEntry> = emptyList(),
+    val loading: Boolean = false,
+    val teacher: String = "",
+    val location: String = "",
+    val slots: List<top.sykesp42.rin.data.JwxtTermSlot> = emptyList(),
+    val roomCode: String = "",
+    val freeRoomDay: Int = 0,
+    val freeRoomSections: String = "",
+    val checklist: List<top.sykesp42.rin.data.ChecklistItem> = emptyList(),
+    val checklistLoading: Boolean = false,
+    val reminderDate: String = "",
+    val reminderStart: String = "",
+    val reminderEnd: String = ""
+)
+
+data class GradesUiState(
+    val grades: List<top.sykesp42.rin.data.JwxtGrade> = emptyList(),
+    val exams: List<top.sykesp42.rin.data.JwxtExam> = emptyList(),
+    val notices: List<top.sykesp42.rin.data.JwxtNotice> = emptyList(),
+    val student: top.sykesp42.rin.data.JwxtStudentInfo? = null,
+    val detailFor: String = "",
+    val detail: top.sykesp42.rin.data.JwxtGradeDetail? = null,
+    val creditsByCategory: List<Pair<String, Double>> = emptyList(),
+    val gpaByTerm: List<Pair<String, Double>> = emptyList(),
+    val courseDetail: CourseDetailUiState = CourseDetailUiState(),
+    val freeRooms: List<top.sykesp42.rin.data.JwxtFreeRoom> = emptyList(),
+    val freeRoomLoading: Boolean = false,
+    val freeRoomError: String = "",
+    val freeRoomDay: Int = 0,
+    val freeRoomSections: String = "0102",
+    val termCourses: List<top.sykesp42.rin.data.JwxtTermCourse> = emptyList(),
+    val termLoading: Boolean = false,
+    val detailRoomCode: String = "",
+    val detailFreeRoomDay: Int = 0,
+    val detailFreeRoomSections: String = "0102",
+    val difficultyProfile: List<top.sykesp42.rin.data.CourseDifficulty> = emptyList(),
+    val gpa: Double? = null,
     val loading: Boolean = false,
     val error: String = "",
-    val updatedAt: String = "",
-    val exams: List<JwxtExam> = emptyList(),
-    val examsLoading: Boolean = false,
-    val examsError: String = "",
-    val grades: List<JwxtGrade> = emptyList(),
-    val gradesLoading: Boolean = false,
-    val gradesError: String = "",
-    val termCourses: List<JwxtTermCourse> = emptyList(),
-    val termCoursesLoading: Boolean = false,
-    val termCoursesError: String = "",
-    val detail: RoomDetailUiState? = null
+    val fromCache: Boolean = false,
+    val cachedAt: String = "",
+    val authExpired: Boolean = false
 )
 
 class AppViewModel(private val container: AppContainer) : ViewModel() {
-    private val settingsRepo = container.settings
+    private val _auth = MutableStateFlow<AuthState>(AuthState.Loading)
+    val auth: StateFlow<AuthState> = _auth.asStateFlow()
+
+    private val _login = MutableStateFlow(LoginUiState())
+    val login: StateFlow<LoginUiState> = _login.asStateFlow()
+
+    /** Manual entries, merged on top of whatever the crawler returns. */
+    val manualSchedule = container.manualSchedule
+    val courseReminders = container.courseReminders
 
     private val _settings = MutableStateFlow<AppSettings?>(null)
     val settings: StateFlow<AppSettings?> = _settings.asStateFlow()
 
+    private val _today = MutableStateFlow(TodayUiState())
+    val today: StateFlow<TodayUiState> = _today.asStateFlow()
+
     private val _schedule = MutableStateFlow(ScheduleUiState())
     val schedule: StateFlow<ScheduleUiState> = _schedule.asStateFlow()
 
-    private val _courseDetail = MutableStateFlow(CourseDetailUiState())
-    val courseDetail: StateFlow<CourseDetailUiState> = _courseDetail.asStateFlow()
-
-    private val _petWeather = MutableStateFlow<top.sykesp42.rin.data.PetWeatherSnapshot?>(null)
-    val petWeather: StateFlow<top.sykesp42.rin.data.PetWeatherSnapshot?> = _petWeather.asStateFlow()
-
-    private val _courseOverrides = MutableStateFlow<Map<String, CourseOverride>>(emptyMap())
-    val courseOverrides: StateFlow<Map<String, CourseOverride>> = _courseOverrides.asStateFlow()
-
-    private val _todayFrame = MutableStateFlow<Bitmap?>(null)
-    val todayFrame: StateFlow<Bitmap?> = _todayFrame.asStateFlow()
-
-    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    val messages: SharedFlow<String> = _messages.asSharedFlow()
-
-    private val _jwxtConnected = MutableStateFlow(container.jwxtSessions.load() != null)
-    val jwxtConnected: StateFlow<Boolean> = _jwxtConnected.asStateFlow()
-
-    private val _academic = MutableStateFlow(AcademicUiState())
-    val academic: StateFlow<AcademicUiState> = _academic.asStateFlow()
-
     private val _calendar = MutableStateFlow(CalendarUiState())
     val calendar: StateFlow<CalendarUiState> = _calendar.asStateFlow()
+    private var calendarJob: Job? = null
 
-    /**
-     * weekday|block|week → the school's free-room answer. The room helper asks
-     * the same five blocks again when a detail sheet opens, so this keeps that
-     * to one network round per block per day.
-     */
-    private val roomFreeCache = mutableMapOf<String, List<JwxtFreeRoom>>()
+    private val _campusNews = MutableStateFlow(CampusNewsUiState())
+    val campusNews: StateFlow<CampusNewsUiState> = _campusNews.asStateFlow()
+    private var campusNewsJob: Job? = null
 
-    /**
-     * Last overview read from the school. Kept separately because [rebuild]
-     * runs on every settings/manual change and must not clobber the JWXT
-     * timetable with an empty manual one.
-     */
-    private var jwxtOverview: ApiScheduleOverview? = null
+    private val _search = MutableStateFlow(SearchUiState())
+    val search: StateFlow<SearchUiState> = _search.asStateFlow()
 
-    val manualSchedule = container.manualSchedule
-    val courseReminders = container.courseReminders
-    val checklists = container.checklists
-    val appVersion: String get() = container.appVersionName
+    private val _classroomCatalog = MutableStateFlow(ClassroomCatalogUiState())
+    val classroomCatalog: StateFlow<ClassroomCatalogUiState> = _classroomCatalog.asStateFlow()
+    private val _favorites = MutableStateFlow<Set<String>>(emptySet())
+    val favorites: StateFlow<Set<String>> = _favorites.asStateFlow()
+    private val _roomShortcuts = MutableStateFlow<List<RoomShortcut>>(emptyList())
+    val roomShortcuts: StateFlow<List<RoomShortcut>> = _roomShortcuts.asStateFlow()
+    private var catalogRooms: List<top.sykesp42.rin.data.JwxtClassroom> = emptyList()
+    private var catalogJob: Job? = null
+
+    private val _history = MutableStateFlow(HistoryUiState())
+    val history: StateFlow<HistoryUiState> = _history.asStateFlow()
+
+    private val _attendance = MutableStateFlow(AttendanceUiState())
+    val attendance: StateFlow<AttendanceUiState> = _attendance.asStateFlow()
+
+    private val _signQr = MutableStateFlow(SignQrState())
+    val signQr: StateFlow<SignQrState> = _signQr.asStateFlow()
+    private var qrJob: Job? = null
+
+    private val _settingsPage = MutableStateFlow(SettingsUiState())
+    val settingsPage: StateFlow<SettingsUiState> = _settingsPage.asStateFlow()
+
+    private val _petWeather = MutableStateFlow<PetWeatherSnapshot?>(null)
+    val petWeather: StateFlow<PetWeatherSnapshot?> = _petWeather.asStateFlow()
+    private var petWeatherJob: Job? = null
+
+    private val _signAccess = MutableStateFlow(SignAccessState())
+    val signAccess: StateFlow<SignAccessState> = _signAccess.asStateFlow()
+    private var signAccessJob: Job? = null
+
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val messages = _messages.asSharedFlow()
+
+    private val authMutex = Mutex()
+    private var todayJob: Job? = null
+    private var searchJob: Job? = null
+    private var thresholdLoaded = false
+    private var todayCardPresetChecked = false
 
     init {
-        var firstSettings = true
         viewModelScope.launch {
-            settingsRepo.settings.collect { snapshot ->
-                _settings.value = snapshot
-                NoticeFaces.publish(snapshot)
-                Profile.publish(snapshot)
-                if (snapshot.termStartDate.isBlank()) {
-                    settingsRepo.setTermStartDate(defaultTermStart(todayAtCampusClock()).toString())
+            var seenConnectedAt: String? = null
+            container.settings.flow.collect { value ->
+                _settings.value = value
+                // Notification builders run outside this scope and need the chosen
+                // outfit synchronously.
+                NoticeFaces.publish(value)
+                top.sykesp42.rin.ui.profile.Profile.publish(value)
+                if (!todayCardPresetChecked) {
+                    todayCardPresetChecked = true
+                    if (value.todayCardsPreset < TodayCards.PRESET_VERSION) {
+                        viewModelScope.launch { applyTodayCardPreset() }
+                    }
                 }
-                if (snapshot.todayCardsPreset < TodayCards.PRESET_VERSION) {
-                    settingsRepo.setTodayCards(
-                        disabled = TodayCards.defaultDisabledCsv(),
-                        order = TodayCards.defaultOrderCsv(),
-                        preset = TodayCards.PRESET_VERSION
+                _today.update { it.copy(manualCode = value.manualCode, monitorEnabled = value.monitorEnabled) }
+                _classroomCatalog.update { it.copy(selectedCampus = value.selectedCampus) }
+                // First emission = cold start with a stored connection; any later
+                // change = a fresh WebView login. Both are the moment to refresh
+                // every term-stable cache while the session is known good.
+                val changed = seenConnectedAt != value.jwxtConnectedAt
+                if (changed) {
+                    seenConnectedAt = value.jwxtConnectedAt
+                    if (value.jwxtConnectedAt.isNotBlank() && value.localMode) warmLocalCaches()
+                }
+            }
+        }
+        viewModelScope.launch {
+            container.favorites.flow.collect {
+                _favorites.value = it
+                refreshRoomShortcuts()
+            }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.view.collect { view ->
+                if (view != null) {
+                    val saved = recordMonitorView(view)
+                    _today.update {
+                        it.copy(
+                            view = view,
+                            viewReceivedAt = Instant.now(),
+                            cachedRoster = saved ?: it.cachedRoster,
+                            loading = false,
+                            errorCode = "",
+                            errorMessage = ""
+                        )
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.running.collect { running ->
+                _today.update { it.copy(running = running) }
+            }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.stopAt.collect { at -> _today.update { it.copy(stopAt = at) } }
+        }
+        viewModelScope.launch {
+            MonitorRuntime.authExpired.collect { expired ->
+                if (expired) expireSession("登录已失效，重新登录")
+            }
+        }
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) {
+                runCatching { container.rosterStore.load() }.getOrNull()
+            }
+            if (cached != null) {
+                _today.update { it.copy(cachedRoster = cached.second) }
+            }
+        }
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) {
+                container.signAccess.read()?.let { (checkedAt, value) ->
+                    signAccessFromCache(
+                        status = value.status,
+                        appliedVersion = value.appliedVersion,
+                        checkedAt = checkedAt,
+                        now = Instant.now()
                     )
                 }
-                if (firstSettings) {
-                    firstSettings = false
-                    // Show the last good week immediately, then try a fresh
-                    // read. Without this a dead session used to leave the
-                    // page on an empty "第 1 周" until a login succeeded.
-                    restoreScheduleFromCache(snapshot)
-                    if (!snapshot.simpleMode && _jwxtConnected.value) refreshJwxt(0)
-                }
-                rebuild(snapshot, weekOverride = _schedule.value.overview?.week ?: 0)
-                if (snapshot.petWeatherEnabled) refreshPetWeather()
             }
+            if (cached != null) _signAccess.value = cached
+        }
+        restoreSession()
+    }
+
+    fun login(serverUrl: String, username: String, password: String) {
+        val url = serverUrl.trim().trimEnd('/')
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            _login.value = LoginUiState(error = "服务地址要以 http:// 或 https:// 开头")
+            return
+        }
+        if (username.isBlank() || password.isEmpty()) {
+            _login.value = LoginUiState(error = "填写用户名和密码")
+            return
         }
         viewModelScope.launch {
-            manualSchedule.payload.collect {
-                _settings.value?.let { snapshot -> rebuild(snapshot, _schedule.value.overview?.week ?: 0) }
+            _login.value = LoginUiState(busy = true)
+            try {
+                val previous = container.settings.current().serverUrl
+                if (previous.isNotBlank() && previous != url) container.sessionStore.clear()
+                container.settings.setServerUrl(url)
+                val api = container.client(url) ?: throw IllegalArgumentException("invalid server url")
+                val user = withContext(Dispatchers.IO) { api.login(username.trim(), password) }
+                container.settings.setAccount(user.username, user.displayName)
+                MonitorRuntime.clearAuthExpired()
+                MonitorRuntime.resetView()
+                _today.value = TodayUiState()
+                _schedule.value = ScheduleUiState()
+                _search.value = SearchUiState()
+                _history.value = HistoryUiState()
+                _settingsPage.value = SettingsUiState()
+                _auth.value = AuthState.LoggedIn(user)
+                _login.value = LoginUiState()
+                thresholdLoaded = false
+                runCatching { container.history.append(HistoryKind.LOGIN) }
+                bootstrapData()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _login.value = LoginUiState(error = ErrorCopy.login(error))
             }
-        }
-        viewModelScope.launch {
-            _courseOverrides.value = container.courseOverrides.all()
-        }
-        viewModelScope.launch {
-            _todayFrame.value = container.todayFrame.decode()
-        }
-        viewModelScope.launch {
-            container.courseReminders.prune()
         }
     }
 
     fun completeOnboarding() {
-        viewModelScope.launch { settingsRepo.setOnboarded(true) }
-    }
-
-    fun refreshSchedule() {
-        val snapshot = _settings.value ?: return
-        rebuild(snapshot, 0)
-        if (!snapshot.simpleMode) refreshJwxt(0)
-    }
-
-    fun switchWeek(delta: Int) {
-        val snapshot = _settings.value ?: return
-        val current = _schedule.value.overview?.week ?: currentWeekNumber(snapshot, todayAtCampusClock())
-        val target = (current + delta).coerceIn(1, 30)
-        rebuild(snapshot, target)
-        if (!snapshot.simpleMode) refreshJwxt(target)
-    }
-
-    fun backToCurrentWeek() {
-        val snapshot = _settings.value ?: return
-        rebuild(snapshot, 0)
-        if (!snapshot.simpleMode) refreshJwxt(0)
-    }
-
-    fun setJwxtBaseUrl(value: String) {
+        if (_auth.value !is AuthState.LoggedIn) return
         viewModelScope.launch {
-            settingsRepo.setJwxtBaseUrl(value.trim().ifBlank { "https://jwxt.gdupt.edu.cn" })
-            if (_jwxtConnected.value) refreshJwxt(0)
+            container.settings.setOnboarded(true)
+            _messages.emit("设置完成")
         }
     }
 
-    fun saveJwxtSession(cookieHeader: String) {
-        if (cookieHeader.isBlank()) return
-        container.jwxtSessions.save(SessionCookie("Cookie", cookieHeader))
-        _jwxtConnected.value = true
+    fun logout() {
         viewModelScope.launch {
-            settingsRepo.setJwxtConnectedAt(java.time.Instant.now().toString())
-            notify("教务已连接")
-        }
-        refreshJwxt(0)
-    }
-
-    fun disconnectJwxt() {
-        container.jwxtSessions.clear()
-        jwxtOverview = null
-        _jwxtConnected.value = false
-        viewModelScope.launch {
-            settingsRepo.setJwxtConnectedAt("")
-            notify("已断开教务连接")
-        }
-        _settings.value?.let { rebuild(it, 0) }
-    }
-
-    private fun refreshJwxt(weekOverride: Int) {
-        val snapshot = _settings.value ?: return
-        if (snapshot.simpleMode) return
-        val stored = container.jwxtSessions.load() ?: run {
-            _jwxtConnected.value = false
-            return
-        }
-        viewModelScope.launch {
-            val api = LocalJwxtApi(
-                baseUrl = snapshot.jwxtBaseUrl,
-                cookieHeader = { container.jwxtSessions.load()?.value ?: stored.value },
-                onCookieUpdate = { header ->
-                    runCatching { container.jwxtSessions.save(SessionCookie("Cookie", header)) }
-                },
-                clock = LocalDateTime.now(campusZone)
-            )
-            runCatching { api.overview(todayAtCampusClock(), weekOverride) }
-                .onSuccess { overview ->
-                    jwxtOverview = overview
-                    _schedule.value = ScheduleUiState(
-                        overview = overview,
-                        loading = false,
-                        currentWeek = if (weekOverride > 0) weekOverride else overview.week,
-                        termStart = snapshot.termStartDate,
-                        warning = null
-                    )
-                    container.cache.write("schedule_week0", ApiScheduleOverview.serializer(), overview)
-                }
-                .onFailure { error ->
-                    handleJwxtFailure(error)
-                }
-        }
-    }
-
-    /**
-     * Last good week from disk. The schedule cache is written on every
-     * successful read; showing it stale beats showing an empty 第 1 周.
-     */
-    private fun restoreScheduleFromCache(snapshot: AppSettings) {
-        if (_schedule.value.overview != null) return
-        val cached = container.cache.read("schedule_week0", ApiScheduleOverview.serializer()) ?: return
-        val (at, overview) = cached
-        // Seed jwxtOverview too: rebuild() prefers the school timetable, so the
-        // restored week survives settings changes instead of being replaced by
-        // a hand-built empty week.
-        jwxtOverview = overview
-        _schedule.value = ScheduleUiState(
-            overview = overview,
-            loading = false,
-            currentWeek = overview.week,
-            termStart = snapshot.termStartDate,
-            fromCache = true,
-            cachedAt = at.toString()
-        )
-    }
-
-    /**
-     * One place that turns a failed read into the same state change everywhere:
-     * an expired session disconnects, anything else only warns.
-     */
-    private fun handleJwxtFailure(error: Throwable) {
-        val expired = error is LocalJwxtApi.JwxtSessionExpired ||
-            error is LocalJwxtApi.JwxtCaptchaRequired
-        if (expired) {
-            jwxtOverview = null
-            container.jwxtSessions.clear()
-            _jwxtConnected.value = false
-            viewModelScope.launch { settingsRepo.setJwxtConnectedAt("") }
-            if (_schedule.value.overview == null) {
-                restoreScheduleFromCache(_settings.value ?: return)
-            }
-            _schedule.value = _schedule.value.copy(
-                warning = "教务登录已过期，请到「我的 → 教务连接」重新登录。"
-            )
-        } else {
-            _schedule.value = _schedule.value.copy(
-                warning = "教务暂时不可用，显示的是最近一次读取的课表。"
-            )
-        }
-    }
-
-    /** A JWXT client bound to the stored session, or null when not connected. */
-    private fun jwxtApi(snapshot: AppSettings): LocalJwxtApi? {
-        val stored = container.jwxtSessions.load() ?: return null
-        return LocalJwxtApi(
-            baseUrl = snapshot.jwxtBaseUrl,
-            cookieHeader = { container.jwxtSessions.load()?.value ?: stored.value },
-            onCookieUpdate = { header ->
-                runCatching { container.jwxtSessions.save(SessionCookie("Cookie", header)) }
-            },
-            clock = LocalDateTime.now(campusZone)
-        )
-    }
-
-
-    fun setTermStart(date: LocalDate) {
-        viewModelScope.launch {
-            settingsRepo.setTermStartDate(date.toString())
-            _settings.value?.let { rebuild(it, 0) }
-        }
-    }
-
-    // ---- 校务：教室助手 + 考试 + 成绩 --------------------------------------
-
-    /**
-     * First entry to the 校务 page. The block is chosen from the school clock
-     * once; after that the user's own pick sticks until the page is refreshed.
-     */
-    fun openAcademic() {
-        val snapshot = _settings.value ?: return
-        if (snapshot.simpleMode) return
-        val state = _academic.value
-        // week > 0 only happens after a successful load, so this is "first time
-        // this session" rather than "list is momentarily empty".
-        val firstOpen = state.week == 0
-        if (firstOpen) {
-            _academic.update {
-                it.copy(
-                    day = todayAtCampusClock(),
-                    slot = roomSlotAt(nowMinutesAt()) ?: ROOM_SLOTS.last()
-                )
-            }
-        }
-        if (firstOpen || (state.rooms.isEmpty() && state.error.isBlank() && !state.loading)) {
-            loadFreeRooms()
-        }
-        if (state.exams.isEmpty() && state.examsError.isBlank() && !state.examsLoading) loadExams()
-        if (state.grades.isEmpty() && state.gradesError.isBlank() && !state.gradesLoading) loadGrades()
-    }
-
-    fun selectAcademicDay(day: LocalDate) {
-        if (day == _academic.value.day) return
-        // Drop the previous day's answer so the header can never label one
-        // day's rooms with another day's date.
-        _academic.update { it.copy(day = day, rooms = emptyList(), error = "") }
-        loadFreeRooms()
-    }
-
-    fun selectAcademicSlot(slot: RoomSlot) {
-        if (slot == _academic.value.slot) return
-        _academic.update { it.copy(slot = slot, rooms = emptyList(), error = "") }
-        loadFreeRooms()
-    }
-
-    /** Pick a weekday inside the current teaching week, the way the full client does. */
-    fun selectAcademicWeekday(weekday: Int) {
-        if (weekday !in 1..7) return
-        val today = todayAtCampusClock()
-        val monday = today.with(java.time.DayOfWeek.MONDAY)
-        selectAcademicDay(monday.plusDays((weekday - 1).toLong()))
-    }
-
-    fun selectAcademicCampus(campus: String) {
-        _academic.update { it.copy(campus = campus) }
-    }
-
-    fun refreshAcademic() {
-        roomFreeCache.clear()
-        loadFreeRooms(force = true)
-        loadExams(force = true)
-        loadGrades(force = true)
-        loadCalendar(force = true)
-    }
-
-    /** The calendar segment asks for its own reads the first time it is shown. */
-    fun ensureCalendar() {
-        val state = _calendar.value
-        if (state.days.isEmpty() && !state.loading && state.error.isBlank()) {
-            loadCalendar()
-        }
-        ensureTermCourses()
-    }
-
-    /** The month grid and the calendar day sheet both need the term timetable. */
-    fun ensureTermCourses() {
-        val academic = _academic.value
-        if (academic.termCourses.isEmpty() &&
-            !academic.termCoursesLoading &&
-            academic.termCoursesError.isBlank()
-        ) {
-            loadTermCourses()
-        }
-    }
-
-    private fun loadTermCourses(force: Boolean = false) {
-        val snapshot = _settings.value ?: return
-        if (_academic.value.termCoursesLoading) return
-        if (!force && _academic.value.termCourses.isNotEmpty()) return
-        val api = jwxtApi(snapshot) ?: return
-        _academic.update { it.copy(termCoursesLoading = true, termCoursesError = "") }
-        viewModelScope.launch {
-            runCatching { api.fetchTermCourses() }
-                .onSuccess { courses ->
-                    _academic.update { state ->
-                        state.copy(termCourses = courses, termCoursesLoading = false)
-                    }
-                }
-                .onFailure { error ->
-                    _academic.update { state ->
-                        state.copy(
-                            termCoursesLoading = false,
-                            termCoursesError = academicErrorText(error)
-                        )
-                    }
-                }
-        }
-    }
-
-    private fun loadCalendar(force: Boolean = false) {
-        val snapshot = _settings.value ?: return
-        if (_calendar.value.loading) return
-        if (!force && _calendar.value.days.isNotEmpty()) return
-        val api = jwxtApi(snapshot) ?: return
-        _calendar.update { it.copy(loading = true, error = "") }
-        viewModelScope.launch {
-            runCatching { api.fetchCalendar() }
-                .onSuccess { calendar ->
-                    _calendar.value = CalendarUiState(
-                        loading = false,
-                        days = calendar?.days.orEmpty(),
-                        term = calendar?.term.orEmpty(),
-                        termLabel = calendar?.termLabel.orEmpty(),
-                        error = if (calendar == null) "教务没有返回校历" else ""
-                    )
-                }
-                .onFailure { error ->
-                    _calendar.update { it.copy(loading = false, error = academicErrorText(error)) }
-                }
-        }
-    }
-
-    private fun loadFreeRooms(force: Boolean = false) {
-        val snapshot = _settings.value ?: return
-        val api = jwxtApi(snapshot) ?: run {
-            _academic.update {
-                it.copy(loading = false, error = "先在「我的 → 教务连接」登录教务，才能查教室")
-            }
-            return
-        }
-        val state = _academic.value
-        _academic.update { it.copy(loading = true, error = "") }
-        viewModelScope.launch {
+            val current = container.settings.current()
             runCatching {
-                val context = api.contextSnapshot()
-                val weekday = state.day.dayOfWeek.value
-                val week = weekNumberFor(state.day, context.currentWeek, todayAtCampusClock())
-                val key = "$weekday|${state.slot.key}|$week"
-                val cached = roomFreeCache[key].takeIf { !force && it != null }
-                val rooms = cached ?: readFreeRooms(api, context.currentTerm, weekday, week, state.slot.key)
-                    .also { roomFreeCache[key] = it }
-                rooms to week
-            }.onSuccess { (rooms, week) ->
-                _academic.update {
-                    it.copy(
-                        rooms = rooms,
-                        week = week,
-                        loading = false,
-                        error = "",
-                        updatedAt = LocalTime.now(campusZone)
-                            .format(DateTimeFormatter.ofPattern("HH:mm"))
-                    )
-                }
-            }.onFailure { error ->
-                // A page-local read failure must not raise the schedule banner;
-                // only an actually expired session is worth the global warning.
-                if (error is LocalJwxtApi.JwxtSessionExpired ||
-                    error is LocalJwxtApi.JwxtCaptchaRequired
-                ) {
-                    handleJwxtFailure(error)
-                }
-                _academic.update {
-                    it.copy(loading = false, error = academicErrorText(error))
-                }
+                withContext(Dispatchers.IO) { container.client(current.serverUrl)?.logout() }
             }
+            container.sessionStore.clear()
+            container.settings.resetForLogout()
+            container.controller.logout()
+            withContext(Dispatchers.IO) { container.rosterStore.clear() }
+            withContext(Dispatchers.IO) { container.attendance.clear() }
+            withContext(Dispatchers.IO) { container.scheduleChanges.clear() }
+            _attendance.value = AttendanceUiState()
+            runCatching { container.history.append(HistoryKind.LOGOUT) }
+            HandoffRuntime.clear()
+            HandoffRuntime.clearOutcome()
+            container.handoffJournal.clear()
+            MonitorRuntime.clearAuthExpired()
+            MonitorRuntime.resetView()
+            _auth.value = AuthState.LoggedOut()
+            _login.value = LoginUiState()
+            _today.value = TodayUiState()
+            _schedule.value = ScheduleUiState()
+            _search.value = SearchUiState()
+            _history.value = HistoryUiState()
+            _settingsPage.value = SettingsUiState()
+            thresholdLoaded = false
         }
     }
 
-    /**
-     * Campus wifi drops single requests now and then; one silent retry turns
-     * that into a slower answer instead of an error the user has to tap away.
-     */
-    private suspend fun readFreeRooms(
-        api: LocalJwxtApi,
-        term: String,
-        weekday: Int,
-        week: Int,
-        slotKey: String
-    ): List<JwxtFreeRoom> = runCatching {
-        api.freeRoomsIn(term, weekday, week, slotKey)
-    }.getOrElse { error ->
-        if (error is LocalJwxtApi.JwxtSessionExpired || error is LocalJwxtApi.JwxtCaptchaRequired) {
-            throw error
-        }
-        kotlinx.coroutines.delay(700)
-        api.freeRoomsIn(term, weekday, week, slotKey)
+    fun setTheme(mode: ThemeMode) {
+        viewModelScope.launch { container.settings.setTheme(mode.key) }
     }
 
-    private fun loadExams(force: Boolean = false) {
-        val snapshot = _settings.value ?: return
-        if (_academic.value.examsLoading) return
-        if (!force && _academic.value.exams.isNotEmpty()) return
-        val api = jwxtApi(snapshot) ?: return
-        _academic.update { it.copy(examsLoading = true, examsError = "") }
-        viewModelScope.launch {
-            runCatching { api.fetchExams() }
-                .onSuccess { exams ->
-                    _academic.update { state -> state.copy(exams = exams, examsLoading = false) }
-                }
-                .onFailure { error ->
-                    _academic.update { state ->
-                        state.copy(examsLoading = false, examsError = academicErrorText(error))
-                    }
-                }
-        }
+    fun setThemeAccent(value: String) {
+        viewModelScope.launch { container.settings.setThemeAccent(value) }
     }
 
-    private fun loadGrades(force: Boolean = false) {
-        val snapshot = _settings.value ?: return
-        if (_academic.value.gradesLoading) return
-        if (!force && _academic.value.grades.isNotEmpty()) return
-        val api = jwxtApi(snapshot) ?: return
-        _academic.update { it.copy(gradesLoading = true, gradesError = "") }
-        viewModelScope.launch {
-            runCatching { api.fetchGrades() }
-                .onSuccess { grades ->
-                    _academic.update { state -> state.copy(grades = grades, gradesLoading = false) }
-                }
-                .onFailure { error ->
-                    _academic.update { state ->
-                        state.copy(gradesLoading = false, gradesError = academicErrorText(error))
-                    }
-                }
-        }
+    fun setThemeCorners(value: String) {
+        viewModelScope.launch { container.settings.setThemeCorners(value) }
     }
 
-    /**
-     * Room detail: ask the school which of today's five blocks the room is free
-     * in, then add what only the phone knows — your own class in that room.
-     */
-    fun openRoomDetail(room: JwxtFreeRoom) = openRoomDetail(
-        roomName = room.roomName,
-        campus = room.campus,
-        building = room.building,
-        area = room.area,
-        capacity = room.capacity
-    )
-
-    fun openRoomDetail(
-        roomName: String,
-        campus: String = "",
-        building: String = "",
-        area: String = "",
-        capacity: Int = 0
-    ) {
-        val snapshot = _settings.value ?: return
-        _academic.update {
-            it.copy(
-                detail = RoomDetailUiState(
-                    roomName = roomName,
-                    campus = campus,
-                    building = building,
-                    area = area,
-                    capacity = capacity,
-                    loading = true
-                )
-            )
-        }
-        val api = jwxtApi(snapshot) ?: run {
-            _academic.update { state ->
-                state.copy(
-                    detail = state.detail?.copy(
-                        loading = false,
-                        error = "先在「我的 → 教务连接」登录教务"
-                    )
-                )
-            }
-            return
-        }
-        viewModelScope.launch {
-            runCatching {
-                val context = api.contextSnapshot()
-                val today = todayAtCampusClock()
-                val weekday = today.dayOfWeek.value
-                val week = weekNumberFor(today, context.currentWeek, today)
-                val slots = coroutineScope {
-                    ROOM_SLOTS.map { slot ->
-                        async {
-                            RoomSlotState(
-                                slot = slot,
-                                free = roomFreeIn(api, context.currentTerm, weekday, week, slot.key, roomName)
-                            )
-                        }
-                    }.map { it.await() }
-                }
-                Pair(slots, week)
-            }.onSuccess { (slots, week) ->
-                val alternatives = _academic.value.rooms
-                    .filter { it.roomName != roomName && (campus.isBlank() || it.campus == campus) }
-                    .distinctBy { it.roomName }
-                    .take(3)
-                    .map { it.roomName }
-                _academic.update { state ->
-                    state.copy(
-                        week = if (week > 0) week else state.week,
-                        detail = state.detail?.copy(
-                            slots = slots,
-                            loading = false,
-                            myCourses = myCoursesInRoom(roomName),
-                            alternatives = alternatives,
-                            error = ""
-                        )
-                    )
-                }
-            }.onFailure { error ->
-                _academic.update { state ->
-                    state.copy(
-                        detail = state.detail?.copy(
-                            loading = false,
-                            error = academicErrorText(error)
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    fun closeRoomDetail() {
-        _academic.update { it.copy(detail = null) }
-    }
-
-    /** true/false from the school's answer, null when that block could not be read. */
-    private suspend fun roomFreeIn(
-        api: LocalJwxtApi,
-        term: String,
-        weekday: Int,
-        week: Int,
-        slotKey: String,
-        roomName: String
-    ): Boolean? {
-        val key = "$weekday|$slotKey|$week"
-        val rooms = roomFreeCache[key] ?: runCatching {
-            readFreeRooms(api, term, weekday, week, slotKey)
-        }.onSuccess { roomFreeCache[key] = it }.getOrNull() ?: return null
-        return isRoomFree(rooms.map { it.roomName }.toSet(), roomName)
-    }
-
-    /** Your own classes in this room today, if the timetable is loaded. */
-    private fun myCoursesInRoom(roomName: String): List<String> {
-        val target = normalizeRoomName(roomName)
-        if (target.isBlank()) return emptyList()
-        val today = todayAtCampusClock()
-        val events = _schedule.value.overview?.days
-            ?.firstOrNull { it.date == today.toString() }
-            ?.events
-            .orEmpty()
-        return events.filter { event ->
-            val location = normalizeRoomName(event.location)
-            location.isNotBlank() && (location.contains(target) || target.contains(location))
-        }.map { "${it.startTime}-${it.endTime} ${it.courseName}" }
-    }
-
-    private fun academicErrorText(error: Throwable): String = when (error) {
-        is LocalJwxtApi.JwxtSessionExpired -> "教务登录已过期，请到「我的 → 教务连接」重新登录。"
-        is LocalJwxtApi.JwxtCaptchaRequired -> "教务需要验证码，请用网页登录一次。"
-        else -> "教务暂时没有响应，稍后再试。"
-    }
-
-    private fun rebuild(snapshot: AppSettings, weekOverride: Int) {
-        val today = todayAtCampusClock()
-        // Prefer the school timetable whenever it covers the requested week.
-        val fromSchool = jwxtOverview?.takeIf { school ->
-            weekOverride == 0 || school.week == weekOverride
-        }
-        if (fromSchool != null) {
-            _schedule.value = ScheduleUiState(
-                overview = fromSchool,
-                loading = false,
-                currentWeek = fromSchool.week.takeIf { it > 0 } ?: currentWeekNumber(snapshot, today),
-                termStart = snapshot.termStartDate.ifBlank { defaultTermStart(today).toString() },
-                warning = _schedule.value.warning
-            )
-            return
-        }
-        val overview = buildWeekOverview(
-            payload = manualSchedule.payload.value,
-            settings = snapshot,
-            weekOverride = weekOverride,
-            today = today,
-            nowMinutes = nowMinutesAt()
-        )
-        _schedule.value = ScheduleUiState(
-            overview = overview,
-            loading = false,
-            currentWeek = currentWeekNumber(snapshot, today),
-            termStart = snapshot.termStartDate.ifBlank { defaultTermStart(today).toString() }
-        )
-        // Never write the hand-built overview into schedule_week0: that key is
-        // the school timetable's last-good copy, and a stale local build used
-        // to overwrite it and blank the page after a session died.
-    }
-
-    fun openCourseDetail(event: ApiScheduleEvent, weekday: Int? = null) {
-        val payload = manualSchedule.payload.value
-        val course = payload.courses.firstOrNull { it.name == event.courseName }
-        val override = _courseOverrides.value[event.courseName]
-        val meetings = payload.courses
-            .filter { it.name == event.courseName }
-            .map { CourseMeeting(it.weekday, it.sectionText, it.firstWeek, it.lastWeek, it.location) } +
-            payload.moves
-                .filter { it.courseName == event.courseName }
-                .map { CourseMeeting(it.weekday, it.sectionText, it.week, it.week, course?.location.orEmpty()) }
-        _courseDetail.value = CourseDetailUiState(
-            open = true,
-            courseName = event.courseName,
-            teacher = course?.teacher.orEmpty(),
-            location = event.location.ifBlank { course?.location.orEmpty() },
-            sectionText = event.sectionText,
-            weekday = weekday ?: course?.weekday ?: 0,
-            firstWeek = course?.firstWeek ?: 1,
-            lastWeek = course?.lastWeek ?: 20,
-            alias = override?.alias.orEmpty(),
-            colorIndex = override?.colorIndex ?: 0,
-            meetings = meetings.distinct()
-        )
-    }
-
-    fun dismissCourseDetail() {
-        _courseDetail.value = _courseDetail.value.copy(open = false)
-    }
-
-    fun setCourseOverride(courseName: String, alias: String, colorIndex: Int) {
-        viewModelScope.launch {
-            container.courseOverrides.save(courseName, CourseOverride(alias.trim(), colorIndex))
-            _courseOverrides.value = container.courseOverrides.all()
-            _courseDetail.value = _courseDetail.value.copy(alias = alias.trim(), colorIndex = colorIndex)
-        }
-    }
-
-    fun addManualCourse(course: ManualCourse) = manualSchedule.addCourse(course)
-    fun removeManualCourse(id: String) = manualSchedule.removeCourse(id)
-    fun addManualExam(exam: ManualExam) = manualSchedule.addExam(exam)
-    fun removeManualExam(id: String) = manualSchedule.removeExam(id)
-    fun addManualTodo(todo: ManualTodo) = manualSchedule.addTodo(todo)
-    fun toggleManualTodo(id: String) = manualSchedule.toggleTodo(id)
-    fun removeManualTodo(id: String) = manualSchedule.removeTodo(id)
-    fun addManualMove(move: ManualMove) = manualSchedule.addMove(move)
-    fun removeManualMove(id: String) = manualSchedule.removeMove(id)
-    fun setManualDayMark(date: String, kind: String) = manualSchedule.setDayMark(date, kind)
-    fun resetManualData() = manualSchedule.resetAll()
-
-    fun saveCourseReminder(
-        courseName: String,
-        date: LocalDate,
-        startTime: String,
-        endTime: String,
-        location: String,
-        prefs: ReminderPrefs
-    ) {
-        val reminder = CourseReminder(
-            id = "$courseName-$date-$startTime",
-            courseName = courseName,
-            date = date.toString(),
-            startTime = startTime,
-            endTime = endTime,
-            location = location,
-            leadMinutes = prefs.leadMinutes,
-            appReminder = prefs.appReminder,
-            calendarEvent = prefs.calendarEvent,
-            alarm = prefs.alarm,
-            volume = prefs.volume,
-            vibrate = prefs.vibrate,
-            createdAt = java.time.Instant.now().toString()
-        )
-        container.courseReminders.add(reminder, prefs)
-        if (prefs.alarm) CourseReminderScheduler.schedule(container.appContext, reminder)
-        notify(reminder.resultLine())
-    }
-
-    fun saveReminder(reminder: CourseReminder, prefs: ReminderPrefs): Boolean {
-        container.courseReminders.add(reminder, prefs)
-        if (reminder.alarm) CourseReminderScheduler.schedule(container.appContext, reminder)
-        notify(reminder.resultLine())
-        return true
-    }
-
-    fun removeCourseReminder(reminder: CourseReminder) {
-        container.courseReminders.remove(reminder.id)
-        CourseReminderScheduler.cancel(container.appContext, reminder)
-        notify("已取消提醒")
-    }
-
-    fun removeCourseReminderById(id: String) {
-        val reminder = container.courseReminders.payload.value.reminders.firstOrNull { it.id == id } ?: return
-        removeCourseReminder(reminder)
-    }
-
-    fun setReminderSound(value: String) = launchSetting { settingsRepo.setReminderSound(value) }
-    fun setReminderVolume(value: Int) = launchSetting { settingsRepo.setReminderVolume(value) }
-    fun setReminderVibrate(value: Boolean) = launchSetting { settingsRepo.setReminderVibrate(value) }
-    fun setReminderVibrationMode(value: String) = launchSetting { settingsRepo.setReminderVibrationMode(value) }
-    fun setReminderHeadsUp(value: Boolean) = launchSetting { settingsRepo.setReminderHeadsUp(value) }
-    fun setSignReminderEnabled(value: Boolean) = launchSetting { settingsRepo.setSignReminderEnabled(value) }
-
-    fun setTheme(mode: top.sykesp42.rin.ui.theme.ThemeMode) = launchSetting { settingsRepo.setTheme(mode.key) }
-    fun setThemeAccent(value: String) = launchSetting { settingsRepo.setThemeAccent(value) }
-    fun setThemeCorners(value: String) = launchSetting { settingsRepo.setThemeCorners(value) }
-    fun setThemeDecorations(value: Boolean) = launchSetting { settingsRepo.setThemeDecorations(value) }
-    fun setAnimationsEnabled(value: Boolean) = launchSetting { settingsRepo.setAnimationsEnabled(value) }
-    fun setSplashEnabled(value: Boolean) = launchSetting { settingsRepo.setSplashEnabled(value) }
-    fun setSimpleMode(value: Boolean) {
-        launchSetting { settingsRepo.setSimpleMode(value) }
-        _settings.value?.let { snapshot ->
-            rebuild(snapshot, 0)
-            if (!value) refreshJwxt(0)
-        }
-    }
-    fun setPetEnabled(value: Boolean) = launchSetting { settingsRepo.setPetEnabled(value) }
-    fun setPetContextAware(value: Boolean) = launchSetting { settingsRepo.setPetContextAware(value) }
-    fun setPetWeatherEnabled(value: Boolean) {
-        launchSetting { settingsRepo.setPetWeatherEnabled(value) }
-        if (value) refreshPetWeather()
-    }
-    fun setPetScale(value: Float) = launchSetting { settingsRepo.setPetScale(value) }
-    fun setPetOffsetX(value: Float) = launchSetting { settingsRepo.setPetOffsetX(value) }
-    fun setPetOffsetY(value: Float) = launchSetting { settingsRepo.setPetOffsetY(value) }
-    fun setNoticeOutfit(value: String) = launchSetting { settingsRepo.setNoticeOutfit(value) }
-    fun setNoticePlate(value: String) = launchSetting { settingsRepo.setNoticePlate(value) }
-    fun setNoticeInShade(value: Boolean) = launchSetting { settingsRepo.setNoticeInShade(value) }
-    fun setNoticeInApp(value: Boolean) = launchSetting { settingsRepo.setNoticeInApp(value) }
-    fun setNoticeSlotFace(slot: NoticeSlot, face: NoticeIcon?) {
-        val current = _settings.value ?: return
-        val map = NoticeFaces.parse(current.noticeOverrides).toMutableMap()
-        if (face == null || face == slot.default) map.remove(slot.key) else map[slot.key] = face
-        val raw = map.entries.joinToString(";") { (key, icon) -> "$key=${icon.name}" }
-        launchSetting { settingsRepo.setNoticeOverrides(NoticeFaces.sanitize(raw)) }
-    }
-    fun setAvatar(name: String) = launchSetting { settingsRepo.setAvatar(name) }
-    fun setAvatarFrame(scale: Float, x: Float, y: Float) = launchSetting { settingsRepo.setAvatarFrame(scale, x, y) }
-    fun setProfileName(value: String) = launchSetting { settingsRepo.setProfileName(value.trim()) }
-    fun setHidePersonal(value: Boolean) = launchSetting { settingsRepo.setHidePersonal(value) }
-    fun setShareStyle(value: String) = launchSetting { settingsRepo.setShareStyle(value) }
-    fun setShareFormat(value: String) = launchSetting { settingsRepo.setShareFormat(value) }
-    fun setWeekDefaultTable(value: Boolean) = launchSetting { settingsRepo.setWeekDefaultTable(value) }
-    fun setWeekDefaultFullscreen(value: Boolean) = launchSetting { settingsRepo.setWeekDefaultFullscreen(value) }
-    fun setDaySwipeCrossWeek(value: Boolean) = launchSetting { settingsRepo.setDaySwipeCrossWeek(value) }
-    fun setCustomThemeFocus(value: String) = launchSetting { settingsRepo.setCustomThemeFocus(value) }
-    fun setCustomThemePalette(value: String) = launchSetting { settingsRepo.setCustomThemePalette(value) }
-    fun setCustomThemeScale(value: Float) = launchSetting { settingsRepo.setCustomThemeScale(value) }
-    fun setCustomThemeBlur(value: Float) = launchSetting { settingsRepo.setCustomThemeBlur(value) }
-    fun setCustomThemeFrame(scale: Float, x: Float, y: Float) = launchSetting {
-        settingsRepo.setCustomThemeFrame(scale, x, y)
+    fun setThemeDecorations(value: Boolean) {
+        viewModelScope.launch { container.settings.setThemeDecorations(value) }
     }
 
     fun setCustomThemeCover(uri: Uri) {
         viewModelScope.launch {
-            val installed = container.customTheme.install(uri)
-            if (installed == null) {
-                notify("封面读取失败，换一张试试")
+            val saved = runCatching { container.customTheme.install(uri) }.getOrNull()
+            if (saved == null) {
+                _messages.emit("图片读取失败，换一张试试")
                 return@launch
             }
-            settingsRepo.setCustomThemeCover(installed.fileName, installed.seed)
-            notify("封面已更新")
+            container.settings.setCustomThemeCover(saved.fileName, saved.seed)
+            _messages.emit("封面已应用")
         }
     }
 
     fun clearCustomThemeCover() {
-        val snapshot = _settings.value ?: return
         viewModelScope.launch {
-            container.customTheme.delete(snapshot.customThemeImage)
-            settingsRepo.clearCustomThemeCover()
-            notify("已恢复主题封面")
+            val current = container.settings.current()
+            container.customTheme.delete(current.customThemeImage)
+            container.settings.clearCustomThemeCover()
+            _messages.emit("已还原为内置封面")
         }
     }
 
-    fun setTodayCardEnabled(id: TodayCardId, enabled: Boolean) {
-        val snapshot = _settings.value ?: return
-        val ordered = TodayCards.ordered(snapshot)
-        val disabled = ordered.filter { card ->
-            if (card == id) !enabled else !TodayCards.isEnabled(snapshot, card)
-        }.map { it.key }
+    fun setCustomThemeFocus(value: String) {
+        viewModelScope.launch { container.settings.setCustomThemeFocus(value) }
+    }
+
+    fun setNoticeOutfit(value: String) {
+        viewModelScope.launch { container.settings.setNoticeOutfit(value) }
+    }
+
+    fun setNoticePlate(value: String) {
+        viewModelScope.launch { container.settings.setNoticePlate(value) }
+    }
+
+    fun setNoticeInShade(value: Boolean) {
+        viewModelScope.launch { container.settings.setNoticeInShade(value) }
+    }
+
+    fun setNoticeInApp(value: Boolean) {
+        viewModelScope.launch { container.settings.setNoticeInApp(value) }
+    }
+
+    fun setNoticeSlotFace(slot: NoticeSlot, face: NoticeIcon?) {
+        val current = NoticeFaces.parse(_settings.value?.noticeOverrides.orEmpty()).toMutableMap()
+        if (face == null || face == slot.default) current.remove(slot.key) else current[slot.key] = face
+        val serialised = current.entries.joinToString(";") { (key, value) -> "$key=${value.name}" }
+        viewModelScope.launch { container.settings.setNoticeOverrides(serialised) }
+    }
+
+    fun setCustomThemeScale(value: Float) {
+        viewModelScope.launch { container.settings.setCustomThemeScale(value) }
+    }
+
+    fun setCustomThemeBlur(value: Float) {
+        viewModelScope.launch { container.settings.setCustomThemeBlur(value) }
+    }
+
+    fun setCustomThemeFrame(scale: Float, offsetX: Float, offsetY: Float) {
         viewModelScope.launch {
-            settingsRepo.setTodayCards(
-                disabled = (if (disabled.isEmpty()) listOf("none") else disabled).joinToString(","),
-                order = snapshot.todayCardsOrder.ifBlank { TodayCards.defaultOrderCsv() },
-                preset = TodayCards.PRESET_VERSION
+            container.settings.setCustomThemeFrame(scale, offsetX, offsetY)
+        }
+    }
+
+    fun setCustomThemePalette(value: String) {
+        viewModelScope.launch { container.settings.setCustomThemePalette(value) }
+    }
+
+    fun notify(text: String) {
+        message(text)
+    }
+
+    fun ensureSignAccessLoaded() {
+        refreshSignAccess(
+            force = _signAccess.value.status in setOf(
+                SignAccessLevel.UNKNOWN,
+                SignAccessLevel.PENDING,
+                SignAccessLevel.STALE,
+                SignAccessLevel.ERROR
+            )
+        )
+    }
+
+    fun refreshSignAccess(force: Boolean = false) {
+        if (_auth.value !is AuthState.LoggedIn) return
+        if (signAccessJob?.isActive == true) return
+        val checkedAt = _signAccess.value.verifiedAt
+        if (!force && checkedAt != null &&
+            Duration.between(checkedAt, Instant.now()) < Duration.ofMinutes(5)
+        ) {
+            return
+        }
+        signAccessJob = viewModelScope.launch {
+            val identity = container.licenseIdentity
+            try {
+                val remote = withContext(Dispatchers.IO) {
+                    container.licenseApi.status(
+                        installationId = identity.installationId(),
+                        secret = identity.secret(),
+                        device = collectLicenseDeviceInfo(container.appContext)
+                    )
+                }
+                val now = Instant.now()
+                withContext(Dispatchers.IO) { container.signAccess.write(remote) }
+                applySignAccessState(
+                    signAccessFromRemote(remote.status, remote.appliedVersion, now),
+                    definitive = true
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: LicenseApiException) {
+                if (error.code == "LICENSE_UNAUTHORIZED") {
+                    withContext(Dispatchers.IO) { container.signAccess.clear() }
+                    _signAccess.value = SignAccessState(status = SignAccessLevel.NONE)
+                } else {
+                    applySignAccessState(cachedSignAccessState(), definitive = false)
+                }
+            } catch (error: Exception) {
+                applySignAccessState(cachedSignAccessState(), definitive = false)
+            }
+        }
+    }
+
+    suspend fun applySignAccess(code: String): SignAccessApplyOutcome {
+        val identity = container.licenseIdentity
+        val label = container.settings.current().profileName.ifBlank { "Rin Android" }
+        return try {
+            val remote = withContext(Dispatchers.IO) {
+                container.licenseApi.apply(
+                    code = code,
+                    installationId = identity.installationId(),
+                    appVersion = appVersionName(container.appContext),
+                    label = label,
+                    device = collectLicenseDeviceInfo(container.appContext)
+                )
+            }
+            remote.secret?.takeIf { it.isNotBlank() }?.let(identity::saveSecret)
+            val now = Instant.now()
+            withContext(Dispatchers.IO) { container.signAccess.write(remote) }
+            val state = signAccessFromRemote(remote.status, remote.appliedVersion, now)
+            applySignAccessState(state, definitive = true)
+            SignAccessApplyOutcome.Applied(state)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: LicenseApiException) {
+            val code = when (error.code) {
+                "TOKEN_INVALID" -> "SIGN_ACCESS_INVALID"
+                "VERSION_MISMATCH" -> "SIGN_ACCESS_VERSION"
+                "REAPPLY_BLOCKED" -> "SIGN_ACCESS_CLOSED"
+                "LICENSE_UNAUTHORIZED" -> "AUTH_REQUIRED"
+                else -> error.code
+            }
+            SignAccessApplyOutcome.Failed(code)
+        } catch (error: Exception) {
+            SignAccessApplyOutcome.Failed("LINK_DOWN")
+        }
+    }
+
+    fun onSignAccessDenied() {
+        _signAccess.value = _signAccess.value.copy(
+            status = SignAccessLevel.STALE,
+            error = "server"
+        )
+        viewModelScope.launch {
+            if (container.settings.current().autoSignEnabled) {
+                container.settings.setAutoSignEnabled(false)
+            }
+        }
+        refreshSignAccess(force = true)
+    }
+
+    private suspend fun cachedSignAccessState(): SignAccessState =
+        withContext(Dispatchers.IO) { container.signAccess.current() }
+
+    private suspend fun applySignAccessState(state: SignAccessState, definitive: Boolean) {
+        _signAccess.value = state
+        if (definitive && !state.proEnabled && container.settings.current().autoSignEnabled) {
+            container.settings.setAutoSignEnabled(false)
+        }
+    }
+
+    fun ensureTodayLoaded() {
+        if (_auth.value !is AuthState.LoggedIn) return
+        val state = _today.value
+        if (state.running) return
+        val stale = state.viewReceivedAt?.let { Duration.between(it, Instant.now()) > FRESH_FOR } ?: true
+        if (state.view == null || stale) fetchTodayOnce()
+    }
+
+    fun refreshToday() {
+        if (_auth.value !is AuthState.LoggedIn) return
+        if (MonitorRuntime.running.value) {
+            MonitorService.start(container.appContext, REASON_WAKE)
+            message("已请求刷新")
+        } else {
+            fetchTodayOnce(force = true)
+        }
+    }
+
+    fun enableMonitoring() {
+        if (_auth.value !is AuthState.LoggedIn) {
+            message("登录后再开启")
+            return
+        }
+        viewModelScope.launch {
+            if (!container.notifications.canPost()) {
+                _messages.emit("通知权限没开，收不到签到提醒")
+                return@launch
+            }
+            val result = container.controller.enable()
+            if (result.startsWith("已开启")) {
+                runCatching { container.history.append(HistoryKind.MONITOR_ENABLED) }
+            }
+            _messages.emit(result)
+        }
+    }
+
+    fun disableMonitoring() {
+        viewModelScope.launch {
+            container.controller.disable()
+            runCatching { container.history.append(HistoryKind.MONITOR_DISABLED) }
+            _today.update { it.copy(running = false, stopAt = null) }
+            _messages.emit("后台监控已关")
+        }
+    }
+
+    fun setAutoSignEnabled(enabled: Boolean) {
+        if (enabled && !_signAccess.value.proEnabled) {
+            viewModelScope.launch { _messages.emit("当前仅支持提醒与名单") }
+            return
+        }
+        viewModelScope.launch {
+            container.settings.setAutoSignEnabled(enabled)
+            runCatching {
+                container.history.append(
+                    if (enabled) HistoryKind.AUTO_ENABLED else HistoryKind.AUTO_DISABLED
+                )
+            }
+            _messages.emit(
+                if (enabled) "自动签到已开；锁屏时只提醒，解锁后继续" else "自动签到已关"
             )
         }
     }
 
-    fun moveTodayCard(id: TodayCardId, delta: Int) {
-        val snapshot = _settings.value ?: return
-        val order = TodayCards.ordered(snapshot).toMutableList()
-        val index = order.indexOf(id)
-        val target = index + delta
-        if (index < 0 || target !in order.indices) return
-        order[index] = order[target].also { order[target] = order[index] }
+    private val _calibration = MutableStateFlow<CalibrationUiState>(CalibrationUiState.Idle)
+    val calibration: StateFlow<CalibrationUiState> = _calibration.asStateFlow()
+
+    /** Local mode: the phone talks to the school directly, no cloud session. */
+    fun setLocalMode(enabled: Boolean) {
         viewModelScope.launch {
-            settingsRepo.setTodayCards(
-                disabled = snapshot.todayCardsDisabled.ifBlank { TodayCards.defaultDisabledCsv() },
-                order = order.joinToString(",") { it.key },
-                preset = TodayCards.PRESET_VERSION
+            container.settings.setLocalMode(enabled)
+            _auth.value = if (enabled) {
+                val name = container.settings.current().rosterName
+                AuthState.LoggedIn(User(id = "", username = "local", displayName = name.ifBlank { "本地模式" }, role = "user"))
+            } else {
+                val settings = container.settings.current()
+                if (settings.serverUrl.isBlank() || container.sessionStore.load() == null) {
+                    AuthState.LoggedOut()
+                } else {
+                    AuthState.LoggedIn(
+                        User(id = "", username = settings.username, displayName = settings.displayName, role = "user")
+                    )
+                }
+            }
+            _messages.emit(
+                if (enabled) "本地模式已开，直连学校接口，不走服务端；要先填名单姓名和教室码" else "已切回云端模式"
             )
+        }
+    }
+
+    fun setSplashEnabled(value: Boolean) {
+        viewModelScope.launch {
+            container.settings.setSplashEnabled(value)
+        }
+    }
+
+    fun setMinimalMode(value: Boolean) {
+        viewModelScope.launch {
+            container.settings.setMinimalMode(value)
+        }
+    }
+
+    fun setAnimationsEnabled(value: Boolean) {
+        viewModelScope.launch {
+            container.settings.setAnimationsEnabled(value)
+        }
+    }
+
+    fun setPetEnabled(value: Boolean) {
+        viewModelScope.launch { container.settings.setPetEnabled(value) }
+    }
+
+    fun setPetContextAware(value: Boolean) {
+        viewModelScope.launch { container.settings.setPetContextAware(value) }
+    }
+
+    fun setPetWeatherEnabled(value: Boolean) {
+        viewModelScope.launch { container.settings.setPetWeatherEnabled(value) }
+    }
+
+    /**
+     * Campus weather, cached for 30 minutes. Coordinates are the school's, so this
+     * needs no permission and touches no personal data; consumers decide whether to
+     * use it (the pet scenes and the cover chip both gate on their own settings).
+     */
+    fun refreshPetWeather() {
+        if (petWeatherJob?.isActive == true) return
+        petWeatherJob = viewModelScope.launch {
+            container.petWeather.current()?.let { _petWeather.value = it }
+        }
+    }
+
+    fun setWeekDefaultTable(value: Boolean) {
+        viewModelScope.launch { container.settings.setWeekDefaultTable(value) }
+    }
+
+    fun setDaySwipeCrossWeek(value: Boolean) {
+        viewModelScope.launch { container.settings.setDaySwipeCrossWeek(value) }
+    }
+
+    fun addManualCourse(course: top.sykesp42.rin.data.ManualCourse) = container.manualSchedule.addCourse(course)
+    fun removeManualCourse(id: String) = container.manualSchedule.removeCourse(id)
+    fun addManualExam(exam: top.sykesp42.rin.data.ManualExam) = container.manualSchedule.addExam(exam)
+    fun removeManualExam(id: String) = container.manualSchedule.removeExam(id)
+    fun addManualTodo(todo: top.sykesp42.rin.data.ManualTodo) = container.manualSchedule.addTodo(todo)
+    fun toggleManualTodo(id: String) = container.manualSchedule.toggleTodo(id)
+    fun removeManualTodo(id: String) = container.manualSchedule.removeTodo(id)
+    fun addManualMove(move: top.sykesp42.rin.data.ManualMove) = container.manualSchedule.addMove(move)
+    fun removeManualMove(id: String) = container.manualSchedule.removeMove(id)
+    fun setManualDayMark(date: String, kind: String) = container.manualSchedule.setDayMark(date, kind)
+
+    /** 重置数据：drop every manual entry and keep the crawled schedule. */
+    fun resetManualData() {
+        container.manualSchedule.resetAll()
+        notify("已清除手动数据")
+    }
+
+    /** One-off course reminder: save, arm the alarm, and optionally open the calendar. */
+    fun saveCourseReminder(
+        reminder: top.sykesp42.rin.data.CourseReminder,
+        prefs: top.sykesp42.rin.data.ReminderPrefs
+    ): Boolean {
+        val trigger = reminder.triggerAt()
+        if (trigger == null || !trigger.isAfter(java.time.LocalDateTime.now())) {
+            notify("提醒时间已过")
+            return false
+        }
+        container.courseReminders.add(reminder, prefs)
+        if (reminder.appReminder || reminder.alarm) {
+            top.sykesp42.rin.reminder.CourseReminderScheduler.schedule(
+                container.appContext,
+                reminder
+            )
+        }
+        if (reminder.calendarEvent) {
+            val opened = top.sykesp42.rin.reminder.CourseReminderCalendar.insert(
+                container.appContext,
+                reminder
+            )
+            if (!opened) notify("没有可用的系统日历")
+        }
+        notify(reminder.resultLine())
+        return true
+    }
+
+    fun removeCourseReminder(id: String) {
+        val reminder = container.courseReminders.payload.value.reminders.firstOrNull { it.id == id }
+        if (reminder != null) {
+            top.sykesp42.rin.reminder.CourseReminderScheduler.cancel(container.appContext, reminder)
+        }
+        container.courseReminders.remove(id)
+        notify("已取消提醒")
+    }
+
+    fun setReminderSound(value: String) {
+        viewModelScope.launch { container.settings.setReminderSound(value) }
+    }
+
+    fun setReminderVolume(value: Int) {
+        viewModelScope.launch { container.settings.setReminderVolume(value) }
+    }
+
+    fun setReminderVibrate(value: Boolean) {
+        viewModelScope.launch { container.settings.setReminderVibrate(value) }
+    }
+
+    fun setReminderVibrationMode(value: String) {
+        viewModelScope.launch { container.settings.setReminderVibrationMode(value) }
+    }
+
+    fun setReminderHeadsUp(value: Boolean) {
+        viewModelScope.launch { container.settings.setReminderHeadsUp(value) }
+    }
+
+    fun setTodayCardEnabled(id: top.sykesp42.rin.ui.today.TodayCardId, enabled: Boolean) {
+        viewModelScope.launch {
+            val current = container.settings.current()
+            val stored = current.todayCardsDisabled
+            val disabled = if (stored.isBlank()) {
+                top.sykesp42.rin.ui.today.TodayCardId.entries
+                    .filterNot { it.defaultEnabled }
+                    .map { it.key }
+                    .toMutableSet()
+            } else {
+                stored.split(',').filter { it.isNotBlank() }.toMutableSet()
+            }
+            if (enabled) disabled.remove(id.key) else disabled.add(id.key)
+            container.settings.setTodayCardsDisabled(
+                if (disabled.isEmpty()) "none" else disabled.joinToString(",")
+            )
+            container.settings.setTodayCardsPreset(TodayCards.PRESET_VERSION)
         }
     }
 
     fun resetTodayCards() {
         viewModelScope.launch {
-            settingsRepo.setTodayCards(
-                disabled = TodayCards.defaultDisabledCsv(),
-                order = TodayCards.defaultOrderCsv(),
-                preset = TodayCards.PRESET_VERSION
-            )
-            notify("卡片已恢复默认")
+            applyTodayCardPreset()
+            notify("已恢复默认卡片顺序")
         }
     }
 
-    fun refreshPetWeather() {
-        val snapshot = _settings.value
-        if (snapshot?.petWeatherEnabled == false) return
+    private suspend fun applyTodayCardPreset() {
+        container.settings.setTodayCardsDisabled(TodayCards.defaultDisabledCsv())
+        container.settings.setTodayCardsOrder(TodayCards.defaultOrderCsv())
+        container.settings.setTodayCardsPreset(TodayCards.PRESET_VERSION)
+    }
+
+    fun moveTodayCard(id: top.sykesp42.rin.ui.today.TodayCardId, delta: Int) {
         viewModelScope.launch {
-            container.weather.current(force = false)?.let { _petWeather.value = it }
+            val current = container.settings.current()
+            val order = top.sykesp42.rin.ui.today.TodayCards.ordered(current).toMutableList()
+            val index = order.indexOf(id)
+            val target = (index + delta).coerceIn(0, order.lastIndex)
+            if (index < 0 || index == target) return@launch
+            order.removeAt(index)
+            order.add(target, id)
+            container.settings.setTodayCardsOrder(order.joinToString(",") { it.key })
+            container.settings.setTodayCardsPreset(TodayCards.PRESET_VERSION)
         }
     }
 
-    fun pickTodayFrame(uri: Uri) {
+    fun setShareStyle(value: String) {
+        viewModelScope.launch { container.settings.setShareStyle(value) }
+    }
+
+    fun setShareFormat(value: String) {
+        viewModelScope.launch { container.settings.setShareFormat(value) }
+    }
+
+    fun setProfileName(value: String) {
+        viewModelScope.launch { container.settings.setProfileName(value) }
+    }
+
+    fun setHidePersonal(value: Boolean) {
         viewModelScope.launch {
-            if (container.todayFrame.install(uri)) {
-                _todayFrame.value = container.todayFrame.decode()
-            } else {
-                notify("图片读取失败")
+            container.settings.setHidePersonal(value)
+            val current = _settings.value
+            when {
+                // Turning privacy on without a name: mint a fresh pseudonym each time.
+                value && current?.profileName.isNullOrBlank() ->
+                    container.settings.setProfileNameAuto(top.sykesp42.rin.ui.Identity.randomName())
+                // Turning it off: drop a generated name, keep one the user typed.
+                !value && current?.profileNameAuto == true ->
+                    container.settings.setProfileName("")
             }
         }
     }
 
-    fun clearTodayFrame() {
-        container.todayFrame.clear()
-        _todayFrame.value = null
+    fun setAvatar(fileName: String) {
+        viewModelScope.launch { container.settings.setAvatar(fileName) }
     }
 
-    fun notify(text: String) {
-        _messages.tryEmit(text)
+    fun setAvatarFrame(scale: Float, offsetX: Float, offsetY: Float) {
+        viewModelScope.launch { container.settings.setAvatarFrame(scale, offsetX, offsetY) }
     }
 
-    private fun launchSetting(block: suspend () -> Unit) {
-        viewModelScope.launch { block() }
+    fun setPetScale(value: Float) {
+        viewModelScope.launch { container.settings.setPetScale(value) }
     }
 
-    override fun onCleared() {
-        super.onCleared()
+    fun setPetOffsetX(value: Float) {
+        viewModelScope.launch { container.settings.setPetOffsetX(value) }
+    }
+
+    fun setPetOffsetY(value: Float) {
+        viewModelScope.launch { container.settings.setPetOffsetY(value) }
+    }
+
+    fun setWeekDefaultFullscreen(value: Boolean) {
+        viewModelScope.launch { container.settings.setWeekDefaultFullscreen(value) }
+    }
+
+    fun setRosterName(name: String) {
+        viewModelScope.launch {
+            container.settings.setRosterName(name)
+        }
+    }
+
+    /** Save the roster name and immediately re-check the current activity. */
+    fun saveRosterNameAndRefresh(name: String) {
+        viewModelScope.launch {
+            container.settings.setRosterName(name)
+            refreshToday()
+        }
+    }
+
+    private val _grades = MutableStateFlow(GradesUiState())
+    val grades: StateFlow<GradesUiState> = _grades.asStateFlow()
+
+    private val _courseOverrides = MutableStateFlow<Map<String, top.sykesp42.rin.data.CourseOverride>>(emptyMap())
+    val courseOverrides: StateFlow<Map<String, top.sykesp42.rin.data.CourseOverride>> = _courseOverrides.asStateFlow()
+
+    fun setCourseOverride(courseName: String, alias: String, colorIndex: Int) {
+        viewModelScope.launch {
+            runCatching {
+                container.courseOverrides.save(
+                    courseName,
+                    top.sykesp42.rin.data.CourseOverride(alias.trim(), colorIndex)
+                )
+            }
+            _courseOverrides.value = runCatching { container.courseOverrides.all() }.getOrDefault(emptyMap())
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            _courseOverrides.value = runCatching { container.courseOverrides.all() }.getOrDefault(emptyMap())
+        }
+        viewModelScope.launch {
+            container.courseReminders.prune()
+            top.sykesp42.rin.reminder.CourseReminderScheduler.rearmAll(
+                container.appContext,
+                container.courseReminders.payload.value.reminders
+            )
+        }
+    }
+
+    /** Save JWXT credentials and try a programmatic login right away. */
+    fun saveJwxtCredentials(account: String, password: String) {
+        if (account.isBlank() || password.isEmpty()) {
+            message("填写教务账号和密码")
+            return
+        }
+        viewModelScope.launch {
+            val settings = container.settings.current()
+            try {
+                withContext(Dispatchers.IO) {
+                    container.signInJwxt(settings, account.trim(), password)
+                }
+                container.settings.setJwxtConnectedAt(Instant.now().toString())
+                loadSchedule()
+                // force: the cache render above must not shadow the fresh
+                // fetch this login just made possible.
+                loadTermCourses(force = true)
+                loadGrades(force = true)
+                _messages.emit("教务已连接，只保存加密的账号密码")
+            } catch (error: top.sykesp42.rin.data.LocalJwxtApi.JwxtCaptchaRequired) {
+                _messages.emit("这次要验证码：点「登录教务」在网页里登录一次")
+            } catch (error: Exception) {
+                _messages.emit("教务连接失败：${error.message ?: "网络异常"}")
+            }
+        }
+    }
+
+    /** Course detail: summary slots + assessment + teaching calendar + linkage. */
+    fun openCourseDetail(
+        courseName: String,
+        locationHint: String = "",
+        occurrenceDate: String = "",
+        occurrenceStart: String = "",
+        occurrenceEnd: String = ""
+    ) {
+        _grades.update {
+            it.copy(
+                courseDetail = CourseDetailUiState(
+                    courseName = courseName,
+                    loading = true,
+                    checklistLoading = true,
+                    reminderDate = occurrenceDate,
+                    reminderStart = occurrenceStart,
+                    reminderEnd = occurrenceEnd
+                )
+            )
+        }
+        // The checklist is a local read; it must never wait for the teaching
+        // calendar or the term-course request.
+        viewModelScope.launch {
+            val items = runCatching { container.checklists.items(courseName) }.getOrDefault(emptyList())
+            _grades.update { current ->
+                if (current.courseDetail.courseName == courseName) {
+                    current.copy(
+                        courseDetail = current.courseDetail.copy(
+                            checklist = items,
+                            checklistLoading = false
+                        )
+                    )
+                } else {
+                    current
+                }
+            }
+        }
+        viewModelScope.launch {
+            val settings = container.settings.current()
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    container.withJwxt(settings) { api ->
+                        val tasks = api.fetchCourseTasks("")
+                        val task = tasks.firstOrNull { task -> task.courseName.startsWith(courseName.take(4)) }
+                        val calendar = task?.let { runCatching { api.fetchTeachingCalendar(it.taskId) }.getOrElse { emptyList() } }
+                        task to (calendar ?: emptyList())
+                    }
+                }.getOrNull()
+            }
+            val termCourses = _grades.value.termCourses.ifEmpty {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        container.withJwxt(settings) { api -> api.fetchTermCourses() }
+                    }.getOrNull() ?: emptyList()
+                }
+            }
+            val matched = termCourses.firstOrNull { course ->
+                course.courseName == courseName || course.courseName.startsWith(courseName.take(4))
+            }
+            // Term-course rows can omit the room even when the schedule event has
+            // it. Use the event location as a fallback for both display and the
+            // verified-code lookup.
+            val location = matched?.location?.takeIf { it.isNotBlank() } ?: locationHint
+            val firstSlot = matched?.slots?.firstOrNull()
+            val code = location.takeIf { it.isNotBlank() }?.let { roomCodeFor(it) } ?: ""
+            _grades.update { current ->
+                val previous = current.courseDetail
+                val sameCourse = previous.courseName == courseName
+                current.copy(
+                    termCourses = termCourses,
+                    courseDetail = CourseDetailUiState(
+                        courseName = courseName,
+                        assessMode = result?.first?.assessMode ?: "",
+                        entries = result?.second ?: emptyList(),
+                        loading = false,
+                        teacher = matched?.teacher ?: "",
+                        location = location,
+                        slots = matched?.slots ?: emptyList(),
+                        roomCode = code,
+                        freeRoomDay = firstSlot?.weekday ?: 0,
+                        freeRoomSections = firstSlot?.sectionText
+                            ?.split(",")?.joinToString("") { section -> section.padStart(2, '0') } ?: "",
+                        checklist = if (sameCourse) previous.checklist else emptyList(),
+                        checklistLoading = if (sameCourse) previous.checklistLoading else false,
+                        reminderDate = if (sameCourse) previous.reminderDate else "",
+                        reminderStart = if (sameCourse) previous.reminderStart else "",
+                        reminderEnd = if (sameCourse) previous.reminderEnd else ""
+                    )
+                )
+            }
+        }
+    }
+
+    fun dismissCourseDetail() {
+        _grades.update { it.copy(courseDetail = CourseDetailUiState()) }
+    }
+
+    /** Load the schedule for another week (local mode supports arbitrary weeks). */
+    fun switchWeek(delta: Int) {
+        val currentWeek = _schedule.value.overview?.week ?: return
+        val target = currentWeek + delta
+        if (target < 1 || target > 30) return
+        viewModelScope.launch {
+            val settings = container.settings.current()
+            val local = container.localJwxtApi(settings)
+            if (local == null) {
+                _messages.emit("换周只在本地模式可用")
+                return@launch
+            }
+            _schedule.update { it.copy(loading = true, error = "") }
+            // withJwxt re-logins on session expiry; the direct call below is
+            // only the no-credential fallback with the old silent behavior.
+            val overview = withContext(Dispatchers.IO) {
+                runCatching {
+                    container.withJwxt(settings) { api -> api.overview(weekOverride = target) }
+                        ?: local.overview(weekOverride = target)
+                }.getOrNull()
+            }
+            if (overview != null) {
+                container.localCache.write(
+                    "schedule_week$target",
+                    top.sykesp42.rin.data.ApiScheduleOverview.serializer(),
+                    overview
+                )
+                _schedule.update { it.copy(overview = overview, loading = false, fromCache = false) }
+                return@launch
+            }
+            val cached = container.localCache.read(
+                "schedule_week$target",
+                top.sykesp42.rin.data.ApiScheduleOverview.serializer()
+            )
+            if (cached != null) {
+                _schedule.update {
+                    it.copy(overview = cached.second, loading = false, fromCache = true, cachedAt = cached.first.toString())
+                }
+            } else {
+                _schedule.update { it.copy(loading = false, error = "第 $target 周没拉到") }
+            }
+        }
+    }
+
+    /** Free classrooms for a weekday/sections pair (JWXT read-only query). */
+    fun loadFreeRooms(day: Int, sections: String) {
+        if (_grades.value.freeRoomLoading) return
+        _grades.update {
+            it.copy(freeRoomLoading = true, freeRoomError = "", freeRoomDay = day, freeRoomSections = sections)
+        }
+        viewModelScope.launch {
+            val settings = container.settings.current()
+            val week = _schedule.value.overview?.week ?: 0
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    container.withJwxt(settings) { api -> api.fetchFreeClassrooms(day, week, sections) }
+                }
+            }
+            val rooms = result.getOrNull().orEmpty()
+            _grades.update {
+                it.copy(
+                    freeRooms = rooms,
+                    freeRoomLoading = false,
+                    freeRoomError = when {
+                        result.isFailure -> ErrorCopy.from(result.exceptionOrNull()!!)
+                        result.getOrNull() == null -> "教务登录失效了，重新连接后再查。"
+                        else -> ""
+                    }
+                )
+            }
+            val campuses = rooms.map { it.campus }.filter { it.isNotBlank() }.distinct()
+            if (campuses.isNotEmpty()) {
+                _classroomCatalog.update { state ->
+                    state.copy(campuses = (state.campuses + campuses).distinct().sorted())
+                }
+            }
+        }
+    }
+
+    /** Whole-term course summary (term overview screen), refreshed by TTL. */
+    fun loadTermCourses(force: Boolean = false) {
+        if (_grades.value.termLoading) return
+        val listSerializer = kotlinx.serialization.builtins.ListSerializer(top.sykesp42.rin.data.JwxtTermCourse.serializer())
+        val cached = container.localCache.read(TERM_CACHE, listSerializer)
+        if (cached != null && cached.second.isNotEmpty()) {
+            _grades.update { it.copy(termCourses = cached.second, termLoading = false) }
+            if (!force && top.sykesp42.rin.data.isCacheFresh(cached.first, TERM_CACHE_TTL)) return
+        } else if (!force && _grades.value.termCourses.isNotEmpty()) {
+            // Already hydrated by an earlier live fetch; reuse until it is stale.
+            val age = container.localCache.cachedAt(TERM_CACHE)
+            if (age != null && top.sykesp42.rin.data.isCacheFresh(age, TERM_CACHE_TTL)) return
+        }
+        _grades.update { it.copy(termLoading = true) }
+        viewModelScope.launch {
+            val settings = container.settings.current()
+            val courses = withContext(Dispatchers.IO) {
+                runCatching {
+                    container.withJwxt(settings) { api -> api.fetchTermCourses() }
+                }.getOrNull() ?: emptyList()
+            }
+            if (courses.isNotEmpty()) {
+                container.localCache.write(TERM_CACHE, listSerializer, courses)
+                _grades.update { it.copy(termCourses = courses, termLoading = false) }
+            } else {
+                // Keep the cached term schedule; an expired session must not wipe it.
+                _grades.update { it.copy(termLoading = false) }
+            }
+        }
+    }
+
+    /** Room code (if learned) for a course location, cached at detail open. */
+    private suspend fun roomCodeFor(location: String): String? {
+        if (location.isBlank()) return null
+        // Historical or partial copies can contain a blank/stale mapping; only a
+        // valid four-digit code may short-circuit the catalog lookup.
+        runCatching { container.roomCodes.codeFor(location) }.getOrNull()
+            ?.takeIf { Regex("^\\d{4}$").matches(it) }
+            ?.let { return it }
+        val rooms = catalogRooms.ifEmpty {
+            withContext(Dispatchers.IO) { container.classrooms.cached()?.second.orEmpty() }
+        }
+        return verifiedRoomCode(location, rooms)
+    }
+
+    fun exportGradesCsv(): String =
+        top.sykesp42.rin.data.DataExporter.gradesCsv(_grades.value.grades)
+
+    fun exportScheduleIcal(): String? {
+        val courses = _grades.value.termCourses
+        if (courses.isEmpty()) return null
+        // School clock: the term anchor must not shift with the device timezone.
+        val termStart = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
+            .with(java.time.DayOfWeek.MONDAY)
+            .minusWeeks((_schedule.value.overview?.week ?: 1) - 1L)
+        return top.sykesp42.rin.data.DataExporter.scheduleIcal(
+            courses, termStart, _schedule.value.overview?.term ?: "学期"
+        )
+    }
+
+    fun saveChecklist(courseName: String, items: List<top.sykesp42.rin.data.ChecklistItem>) {
+        _grades.update { current ->
+            if (current.courseDetail.courseName == courseName) {
+                current.copy(courseDetail = current.courseDetail.copy(checklist = items))
+            } else {
+                current
+            }
+        }
+        viewModelScope.launch {
+            container.checklists.save(courseName, items)
+        }
+    }
+
+    /** Toggle the score-composition detail of one grade card. */
+    fun toggleGradeDetail(recordId: String) {
+        val current = _grades.value
+        if (current.detailFor == recordId) {
+            _grades.update { it.copy(detailFor = "", detail = null) }
+            return
+        }
+        _grades.update { it.copy(detailFor = recordId, detail = null) }
+        viewModelScope.launch {
+            val settings = container.settings.current()
+            val detail = withContext(Dispatchers.IO) {
+                runCatching {
+                    container.withJwxt(settings) { api -> api.fetchGradeDetail(recordId) }
+                }.getOrNull()
+            }
+            if (_grades.value.detailFor == recordId) {
+                _grades.update { it.copy(detail = detail) }
+            }
+        }
+    }
+
+    /** Fill roster matching name from the JWXT student card. */
+    fun fillRosterNameFromJwxt() {
+        viewModelScope.launch {
+            val student = _grades.value.student
+            if (student == null) {
+                message("先到成绩页拉一次教务数据")
+                return@launch
+            }
+            container.settings.setRosterName(student.name)
+            message("已填入教务姓名")
+        }
+    }
+
+    /** Load grades + exams through the local JWXT session, refreshed by TTL. */
+    fun loadGrades(force: Boolean = false) {
+        if (_grades.value.loading) return
+        val cached = container.localCache.read(
+            GRADES_CACHE,
+            top.sykesp42.rin.data.JwxtGradeBundle.serializer()
+        )
+        if (cached != null) {
+            applyGradeBundle(cached.second, fromCache = true, cachedAt = cached.first.toString())
+            if (!force && top.sykesp42.rin.data.isCacheFresh(cached.first, GRADES_CACHE_TTL)) {
+                _grades.update { it.copy(error = "") }
+                return
+            }
+        }
+        _grades.update { it.copy(loading = true, error = "", authExpired = false) }
+        viewModelScope.launch {
+            val settings = container.settings.current()
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    container.withJwxt(settings) { api ->
+                        top.sykesp42.rin.data.JwxtGradeBundle(
+                            grades = runCatching { api.fetchGrades() }.getOrElse { emptyList() },
+                            exams = runCatching { api.fetchExams() }.getOrElse { emptyList() },
+                            notices = runCatching { api.fetchNotices() }.getOrElse { emptyList() },
+                            student = runCatching { api.fetchStudentInfo() }.getOrNull()
+                        )
+                    }
+                }.getOrNull()
+            }
+            if (result == null || top.sykesp42.rin.data.isEmptyGradeBundle(result)) {
+                if (_grades.value.grades.isEmpty() && _grades.value.exams.isEmpty()) {
+                    _grades.update {
+                        it.copy(
+                            loading = false,
+                            error = "教务登录已失效，重新连接后才能读取成绩。",
+                            authExpired = true
+                        )
+                    }
+                } else {
+                    _grades.update { it.copy(loading = false, fromCache = true) }
+                }
+                return@launch
+            }
+            container.localCache.write(GRADES_CACHE, top.sykesp42.rin.data.JwxtGradeBundle.serializer(), result)
+            applyGradeBundle(result, fromCache = false, cachedAt = Instant.now().toString())
+        }
+    }
+
+    private fun applyGradeBundle(bundle: top.sykesp42.rin.data.JwxtGradeBundle, fromCache: Boolean, cachedAt: String) {
+        _grades.update {
+            it.copy(
+                grades = bundle.grades,
+                exams = bundle.exams,
+                notices = bundle.notices,
+                student = bundle.student,
+                creditsByCategory = top.sykesp42.rin.data.creditsByCategory(bundle.grades),
+                gpaByTerm = top.sykesp42.rin.data.gpaByTerm(bundle.grades),
+                difficultyProfile = top.sykesp42.rin.data.StatsCalculator.difficultyProfile(bundle.grades),
+                gpa = top.sykesp42.rin.data.weightedGpa(bundle.grades),
+                loading = false,
+                fromCache = fromCache,
+                cachedAt = cachedAt,
+                authExpired = false
+            )
+        }
+    }
+
+    fun setLocalThreshold(value: Int) {
+        viewModelScope.launch {
+            container.settings.setLocalThreshold(value)
+        }
+    }
+
+    /** Dry run of the WeChat chain with a harmless link; verifies control compatibility. */
+    fun runCalibration() {
+        if (_calibration.value is CalibrationUiState.Running) return
+        _calibration.value = CalibrationUiState.Running
+        viewModelScope.launch {
+            val result = container.calibration.run()
+            _calibration.value = when (result) {
+                CalibrationRunner.Result.Success ->
+                    CalibrationUiState.Done(true, "演练通过：识码链路与当前企业微信兼容")
+                is CalibrationRunner.Result.Blocked ->
+                    CalibrationUiState.Done(false, calibrationBlockedText(result.reason))
+                is CalibrationRunner.Result.ChainFailed ->
+                    CalibrationUiState.Done(
+                        false,
+                        "演练停在「${result.step}」；企业微信界面可能变了，识码链路要修"
+                    )
+            }
+        }
+    }
+
+    private fun calibrationBlockedText(reason: String): String = when (reason) {
+        CalibrationRunner.REASON_NO_ACCESSIBILITY -> "无障碍服务没开：先开启「Rin自动签到」"
+        CalibrationRunner.REASON_NO_WECOM -> "本机没装企业微信"
+        CalibrationRunner.REASON_LOCKED -> "屏幕锁着或熄屏；解锁亮屏后再试"
+        CalibrationRunner.REASON_BUSY -> "有链路在跑，稍后再试"
+        CalibrationRunner.REASON_QR_ENCODE -> "校准二维码生成失败，再试一次"
+        CalibrationRunner.REASON_PUBLISH -> "写不进共享相册；检查媒体权限后再试"
+        else -> "演练被中断：$reason"
+    }
+
+    fun useRoom(code: String) {
+        if (!_signAccess.value.proEnabled && !container.signAccess.proEnabled()) {
+            message("当前仅支持提醒与名单")
+            return
+        }
+        val normalized = code.filter { it.isDigit() }.take(4)
+        if (normalized.length != 4) {
+            message("填写四位教室码")
+            return
+        }
+        viewModelScope.launch {
+            container.settings.setManualCode(normalized)
+            _today.update { it.copy(manualCode = normalized) }
+            _messages.emit("已切换到教室 $normalized")
+            refreshToday()
+            // Learn: which classroom name lives at this code (from any mode).
+            val settings = container.settings.current()
+            runCatching {
+                val course = container.monitorApi(settings)?.course(normalized) ?: return@runCatching
+                if (course.location.isNotBlank()) {
+                    container.roomCodes.remember(course.location, normalized)
+                    refreshRoomShortcuts()
+                }
+            }
+        }
+    }
+
+    fun clearManualCode() {
+        viewModelScope.launch {
+            container.settings.setManualCode("")
+            _today.update { it.copy(manualCode = "") }
+            _messages.emit("已恢复自动识别教室")
+            refreshToday()
+        }
+    }
+
+    fun ensureScheduleLoaded() {
+        if (_schedule.value.overview == null && !_schedule.value.loading) loadSchedule()
+    }
+
+    /** A user-initiated refresh may retry the school after the backoff window. */
+    fun retryJwxtNow() {
+        container.noteJwxtHealthy()
+    }
+
+    /** Validate/renew the JWXT cookie now and refresh stale offline caches. */
+    fun renewJwxtSession() {
+        viewModelScope.launch {
+            val current = container.settings.current()
+            if (!current.localMode) {
+                message("云端模式不使用本机教务会话")
+                return@launch
+            }
+            if (current.jwxtNeedsLogin) {
+                message("需要网页重连：在课表横幅点「重连」完成滑块验证")
+                return@launch
+            }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { container.keepJwxtSession(current) }.getOrDefault(false)
+            }
+            if (ok) {
+                message("教务会话已续期，正在刷新缓存")
+                loadSchedule()
+                loadTermCourses(force = true)
+                loadGrades(force = true)
+                loadCalendar()
+                refreshClassroomCatalog(notify = false)
+            } else {
+                message("续期失败：保留已有缓存，可稍后重试或重新登录")
+            }
+        }
+    }
+
+    fun loadSchedule(weekOverride: Int = 0) {
+        if (_schedule.value.loading && weekOverride == 0) return
+        _schedule.update { it.copy(loading = true, error = "") }
+        viewModelScope.launch {
+            try {
+                val current = container.settings.current()
+                val api: MonitorApi = container.monitorApi(current)
+                    ?: container.client(current.serverUrl)
+                    ?: throw IllegalArgumentException("invalid server url")
+                val cacheName = "schedule_week${weekOverride.takeIf { it > 0 } ?: 0}"
+                val cached = container.localCache.read(cacheName, top.sykesp42.rin.data.ApiScheduleOverview.serializer())
+                if (cached != null && cached.second.days.isNotEmpty()) {
+                    // Show the stored week immediately — including week 0, so a
+                    // dead JWXT session still opens onto real courses instead of
+                    // an empty page while the refresh is in flight.
+                    _schedule.update {
+                        it.copy(
+                            overview = cached.second,
+                            jwxtConfigured = configuredFlag(current),
+                            loading = if (weekOverride > 0) false else it.loading,
+                            fromCache = true,
+                            cachedAt = cached.first.toString()
+                        )
+                    }
+                }
+                var fromCacheNow = false
+                var fetched = withContext(Dispatchers.IO) {
+                    val local = container.localJwxtApi(current)
+                    when {
+                        current.localMode && weekOverride == 0 -> {
+                            // Ask JWXT directly so live and cache are distinguishable.
+                            // Equality with the cached copy is not proof of fallback.
+                            val live = runCatching {
+                                container.withJwxt(current) { api -> api.overview() }
+                            }.getOrNull()
+                            if (live != null && (live.days.isNotEmpty() || live.today.isNotEmpty())) {
+                                live
+                            } else {
+                                val fallback = cached?.second
+                                if (fallback != null) {
+                                    fromCacheNow = true
+                                    fallback
+                                } else {
+                                    throw IllegalStateException("课表未缓存")
+                                }
+                            }
+                        }
+                        local != null && weekOverride > 0 -> {
+                            // Same renewal rule as switchWeek: browsing another
+                            // week must survive an expired JWXT session. withJwxt
+                            // returns null only when renewal is impossible; the
+                            // direct call then keeps the old throw-to-cache path.
+                            container.withJwxt(current) { api -> api.overview(weekOverride = weekOverride) }
+                                ?: local.overview(weekOverride = weekOverride)
+                        }
+                        else -> api.schedule()
+                    }
+                }
+                var cachedAtNow = ""
+                val todayStr = java.time.LocalDate.now(
+                    java.time.ZoneId.of("Asia/Shanghai")
+                ).toString()
+                if (current.localMode && fetched.days.isNotEmpty() &&
+                    fetched.days.none { it.date == todayStr } &&
+                    fetched.date != todayStr
+                ) {
+                    // Cached overview is from a different day — stale.
+                    // Try refreshing before showing stale data.
+                    val refreshed = withContext(Dispatchers.IO) {
+                        runCatching {
+                            container.withJwxt(current) { api -> api.overview() }
+                        }.getOrNull()
+                    }
+                    if (refreshed != null && refreshed.days.isNotEmpty()) fetched = refreshed
+                }
+                // A stale date only affects the `today` snapshot; the week grid
+                // itself stays intact. Keep every day's events for 周/表.
+                fetched = top.sykesp42.rin.ui.schedule.withToday(
+                    fetched,
+                    java.time.LocalDate.parse(todayStr)
+                )
+                if (current.localMode && fetched.days.isEmpty()) {
+                    // Session may be dead: keep showing the cached week.
+                    container.localCache.read(cacheName, top.sykesp42.rin.data.ApiScheduleOverview.serializer())
+                        ?.let { cached ->
+                            if (cached.second.days.isNotEmpty()) {
+                                fetched = cached.second
+                                fromCacheNow = true
+                                cachedAtNow = cached.first.toString()
+                            }
+                        }
+                } else if (current.localMode && weekOverride > 0 &&
+                    cached != null && fetched == cached.second
+                ) {
+                    // The live provider already fell back to this same cached
+                    // overview; do not present it as a fresh network result.
+                    fromCacheNow = true
+                    cachedAtNow = cached.first.toString()
+                }
+                val overview = fetched.also { fresh ->
+                    if (current.localMode && !fromCacheNow && fresh.days.isNotEmpty()) {
+                        container.localCache.write(cacheName, top.sykesp42.rin.data.ApiScheduleOverview.serializer(), fresh)
+                    }
+                }
+                if (weekOverride == 0 && !fromCacheNow) {
+                    checkScheduleChanges(overview, todayStr)
+                }
+                // Arm today's alarm-only class reminders. They deliberately do
+                // not depend on 后台监控: a reminder that needs the service is a
+                // reminder that dies with it. Cached data is good enough here.
+                if (weekOverride == 0) {
+                    runCatching {
+                        container.classReminders.reschedule(overview)
+                    }
+                }
+                val configured = if (current.localMode) {
+                    container.localJwxtStore.load() != null
+                } else {
+                    runCatching {
+                        val cloud = api as? ApiClient
+                        cloud != null && withContext(Dispatchers.IO) { cloud.jwxtAccount().configured }
+                    }.getOrDefault(true)
+                }
+                _schedule.value = ScheduleUiState(
+                    overview = overview,
+                    jwxtConfigured = configured,
+                    loading = false,
+                    fromCache = fromCacheNow,
+                    // Keep the last successful load time even when the data was
+                    // live then; once the session expires this is the honest
+                    // "缓存 · HH:mm" age shown on Today and Schedule.
+                    cachedAt = if (fromCacheNow) cachedAtNow else Instant.now().toString(),
+                    currentWeek = if (weekOverride == 0) overview.week else _schedule.value.currentWeek
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else if (error.code == "JWXT_ACCOUNT_REQUIRED") {
+                    _schedule.update { it.copy(loading = false, jwxtConfigured = false, error = "") }
+                } else {
+                    _schedule.update { it.copy(loading = false, error = ErrorCopy.from(error)) }
+                }
+            } catch (error: Exception) {
+                val cached = container.localCache.read(
+                    "schedule_week${weekOverride.takeIf { it > 0 } ?: 0}",
+                    top.sykesp42.rin.data.ApiScheduleOverview.serializer()
+                )
+                if (cached != null) {
+                    _schedule.update {
+                        it.copy(
+                            overview = cached.second,
+                            jwxtConfigured = true,
+                            loading = false,
+                            fromCache = true,
+                            cachedAt = cached.first.toString()
+                        )
+                    }
+                } else {
+                    _schedule.update { it.copy(loading = false, error = ErrorCopy.from(error)) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Alert once when today's timetable changes (room/time/added/canceled).
+     * The first fetch of a day only records a baseline; cached replays and
+     * transient empty responses never alert.
+     */
+    private suspend fun checkScheduleChanges(overview: ApiScheduleOverview, today: String) {
+        val events = (overview.days.firstOrNull { it.date == today }?.events ?: overview.today)
+            .sortedBy { it.startTime }
+        val previous = withContext(Dispatchers.IO) {
+            runCatching { container.scheduleChanges.load() }.getOrNull()?.second
+        }
+        // A sudden empty result is far more likely a bad fetch than a day where
+        // every class was canceled at once.
+        if (events.isEmpty() && previous?.events?.isNotEmpty() == true) return
+        withContext(Dispatchers.IO) {
+            runCatching {
+                container.scheduleChanges.save(TodayScheduleSnapshot(date = today, events = events))
+            }
+        }
+        if (previous == null || previous.date != today) return
+        val changes = diffSchedule(previous.events, events)
+        if (changes.isEmpty()) return
+        val first = changes.first()
+        val text = if (changes.size == 1) {
+            first.message()
+        } else {
+            "${first.message()}（共 ${changes.size} 处）"
+        }
+        _messages.emit(text)
+        runCatching { container.notifications.showScheduleChange(text) }
+        runCatching {
+            container.history.append(
+                HistoryKind.SCHEDULE_CHANGE,
+                first.courseName,
+                first.newLocation.ifBlank { first.oldLocation },
+                first.kind.name
+            )
+        }
+    }
+
+    /** Read the cached calendar immediately, then refresh only when stale. */
+    fun ensureCalendarLoaded() {
+        if (_calendar.value.loading || calendarJob?.isActive == true) return
+        calendarJob = viewModelScope.launch {
+            val cached = readCalendarCache()
+            if (cached != null) {
+                _calendar.update {
+                    it.copy(
+                        days = cached.second.days,
+                        term = cached.second.term,
+                        termLabel = cached.second.termLabel,
+                        fromCache = true,
+                        cachedAt = cached.first.toString(),
+                        loading = false
+                    )
+                }
+                if (top.sykesp42.rin.data.isCacheFresh(cached.first, CALENDAR_CACHE_TTL)) {
+                    _calendar.update { it.copy(error = "") }
+                    return@launch
+                }
+            }
+            loadCalendarInternal()
+        }
+    }
+
+    fun loadCalendar() {
+        if (calendarJob?.isActive == true) return
+        calendarJob = viewModelScope.launch { loadCalendarInternal() }
+    }
+
+    private suspend fun loadCalendarInternal() {
+        val current = container.settings.current() ?: return
+        val api = container.localJwxtApi(current)
+        if (api == null) {
+            val cached = readCalendarCache()
+            _calendar.update {
+                it.copy(
+                    loading = false,
+                    days = cached?.second?.days ?: it.days,
+                    term = cached?.second?.term ?: it.term,
+                    termLabel = cached?.second?.termLabel ?: it.termLabel,
+                    fromCache = cached != null,
+                    cachedAt = cached?.first?.toString() ?: it.cachedAt,
+                    error = if (cached == null) "连上教务后才能查看校历。" else "刷新失败，显示缓存"
+                )
+            }
+            return
+        }
+        _calendar.update { it.copy(loading = true, error = "") }
+        val termLabel = _schedule.value.overview?.term.orEmpty()
+        val direct = withContext(Dispatchers.IO) {
+            runCatching { api.fetchCalendar(termLabel) }
+        }
+        var fetched = direct.getOrNull()
+        var failure = direct.exceptionOrNull()
+        if (fetched == null || fetched.days.isEmpty()) {
+            // Same recovery as the catalog: a stale JWXT cookie can surface as
+            // a generic parse/HTTP failure, so retry once through withJwxt.
+            val retry = withContext(Dispatchers.IO) {
+                runCatching { container.withJwxt(current) { it.fetchCalendar(termLabel) } }
+            }
+            val fresh = retry.getOrNull()
+            if (fresh != null && fresh.days.isNotEmpty()) {
+                fetched = fresh
+                failure = null
+            } else if (failure == null) {
+                failure = retry.exceptionOrNull()
+            }
+        }
+        if (fetched != null && fetched.days.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    container.localCache.write(CALENDAR_CACHE, JwxtCalendar.serializer(), fetched)
+                }
+            }
+            _calendar.update {
+                it.copy(
+                    days = fetched.days,
+                    term = fetched.term,
+                    termLabel = fetched.termLabel,
+                    loading = false,
+                    fromCache = false,
+                    cachedAt = "",
+                    error = ""
+                )
+            }
+            return
+        }
+        val cached = readCalendarCache()
+        if (cached != null) {
+            _calendar.update {
+                it.copy(
+                    days = cached.second.days,
+                    term = cached.second.term,
+                    termLabel = cached.second.termLabel,
+                    loading = false,
+                    fromCache = true,
+                    cachedAt = cached.first.toString(),
+                    error = "刷新失败，显示缓存"
+                )
+            }
+        } else {
+            val error = when (failure) {
+                is top.sykesp42.rin.data.LocalJwxtApi.JwxtSessionExpired ->
+                    "教务会话已过期，去「我的」重连"
+                null -> "校历为空，学校暂未发布"
+                else -> "校历没拉到，稍后重试"
+            }
+            _calendar.update { it.copy(loading = false, error = error) }
+        }
+    }
+
+    private suspend fun readCalendarCache(): Pair<Instant, JwxtCalendar>? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                container.localCache.read(CALENDAR_CACHE, JwxtCalendar.serializer())
+            }.getOrNull()
+        }
+
+    /** Show cached news first; refresh at most every few hours unless forced. */
+    fun ensureCampusNewsLoaded() {
+        if (campusNewsJob?.isActive == true) return
+        campusNewsJob = viewModelScope.launch {
+            val cached = readCampusNewsCache()
+            if (cached != null) {
+                _campusNews.update {
+                    it.copy(items = cached.second, fetchedAt = cached.first.toString())
+                }
+                val fresh = cached.second.isNotEmpty() &&
+                    Duration.between(cached.first, Instant.now()) < Duration.ofHours(6)
+                if (fresh) {
+                    _campusNews.update { it.copy(loading = false) }
+                    return@launch
+                }
+            }
+            loadCampusNewsInternal()
+        }
+    }
+
+    fun refreshCampusNews() {
+        if (campusNewsJob?.isActive == true) return
+        campusNewsJob = viewModelScope.launch { loadCampusNewsInternal() }
+    }
+
+    private suspend fun loadCampusNewsInternal() {
+        _campusNews.update { it.copy(loading = true, error = "") }
+        val result = withContext(Dispatchers.IO) {
+            runCatching { container.campusNews.fetch() }
+        }
+        val items = result.getOrNull()
+        if (!items.isNullOrEmpty()) {
+            val now = Instant.now()
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    container.localCache.write(
+                        CAMPUS_NEWS_CACHE,
+                        kotlinx.serialization.builtins.ListSerializer(CampusNewsItem.serializer()),
+                        items
+                    )
+                }
+            }
+            _campusNews.update {
+                it.copy(items = items, loading = false, fetchedAt = now.toString(), error = "")
+            }
+            return
+        }
+        val cached = readCampusNewsCache()
+        val shown = cached?.second?.takeIf { it.isNotEmpty() } ?: _campusNews.value.items
+        _campusNews.update {
+            it.copy(
+                loading = false,
+                items = shown,
+                fetchedAt = cached?.first?.toString() ?: it.fetchedAt,
+                error = if (shown.isNotEmpty()) "刷新失败，显示缓存" else "校园要闻没拉到，稍后重试"
+            )
+        }
+    }
+
+    private suspend fun readCampusNewsCache(): Pair<Instant, List<CampusNewsItem>>? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                container.localCache.read(
+                    CAMPUS_NEWS_CACHE,
+                    kotlinx.serialization.builtins.ListSerializer(CampusNewsItem.serializer())
+                )
+            }.getOrNull()
+        }
+
+    fun ensureClassroomCatalogLoaded() {
+        val current = _settings.value ?: return
+        if (!current.localMode) return
+        if (catalogJob?.isActive == true) return
+        val cached = container.classrooms.cached()
+        if (cached != null) {
+            applyClassroomCatalog(cached.second, cached.first)
+            if (top.sykesp42.rin.data.isCacheFresh(cached.first, CLASSROOM_CACHE_TTL)) return
+        } else if (catalogRooms.isNotEmpty()) {
+            return
+        }
+        refreshClassroomCatalog(notify = false)
+    }
+
+    fun refreshClassroomCatalog(notify: Boolean = true) {
+        if (catalogJob?.isActive == true) return
+        val current = _settings.value ?: return
+        if (!current.localMode) {
+            _classroomCatalog.update { it.copy(loading = false, error = "本地模式未开启") }
+            return
+        }
+        catalogJob = viewModelScope.launch {
+            _classroomCatalog.update { it.copy(loading = true, error = "") }
+            val api = container.localJwxtApi(current)
+            if (api == null) {
+                _classroomCatalog.update {
+                    it.copy(loading = false, error = "教务登录失效了，重新连接后再试。")
+                }
+                return@launch
+            }
+            val direct = withContext(Dispatchers.IO) {
+                runCatching { api.fetchClassroomCatalog() }
+            }
+            var fresh = direct.getOrNull()
+            var failure = direct.exceptionOrNull()
+            if (fresh == null && failure != null) {
+                // A stale JWXT cookie usually surfaces as a login-page parse
+                // failure, not JwxtSessionExpired. Retry once through withJwxt,
+                // which uses the encrypted credentials for a fresh login.
+                fresh = withContext(Dispatchers.IO) {
+                    runCatching {
+                        container.withJwxt(current) { it.fetchClassroomCatalog() }
+                    }.getOrNull()
+                }
+                if (fresh == null && failure == null) {
+                    failure = IllegalStateException("教务会话已过期")
+                }
+            }
+            if (!fresh.isNullOrEmpty()) {
+                val merged = mergeManualRoomCodes(fresh)
+                container.classrooms.save(merged)
+                applyClassroomCatalog(merged, Instant.now())
+                val coded = merged.count { it.code.isNotBlank() }
+                if (notify) _messages.emit("教室目录已更新：${merged.size} 间，$coded 间有考勤码")
+            } else {
+                val cached = container.classrooms.cached()
+                if (cached != null) {
+                    applyClassroomCatalog(cached.second, cached.first, error = "刷新失败，显示缓存")
+                    if (notify) _messages.emit("刷新失败，仍显示缓存")
+                } else {
+                    _classroomCatalog.update {
+                        it.copy(
+                            loading = false,
+                            error = when {
+                                failure is top.sykesp42.rin.data.LocalJwxtApi.JwxtSessionExpired ->
+                                    "教务登录已过期，重新连接后再试。"
+                                failure != null -> "教室目录没拉到，重新登录教务后再试。"
+                                else -> "目录为空，教务没有返回教室"
+                            }
+                        )
+                    }
+                }
+            }
+            if (_search.value.query.isNotBlank()) searchRooms(_search.value.query)
+        }
+    }
+
+    fun selectCampus(campus: String) {
+        _classroomCatalog.update { it.copy(selectedCampus = campus) }
+        viewModelScope.launch { container.settings.setSelectedCampus(campus) }
+        if (_search.value.query.isNotBlank()) searchRooms(_search.value.query)
+    }
+
+    fun toggleFavorite(name: String) {
+        viewModelScope.launch { container.favorites.toggle(name) }
+    }
+
+    /** Learned room/code pairs, pinned rooms first; used by Today's quick sheet. */
+    fun refreshRoomShortcuts() {
+        viewModelScope.launch {
+            val learned = runCatching { container.roomCodes.snapshot() }.getOrDefault(emptyMap())
+            val favorites = _favorites.value
+            _roomShortcuts.value = learned.entries
+                .map { RoomShortcut(it.key, it.value) }
+                .sortedWith(
+                    compareByDescending<RoomShortcut> { it.name in favorites }
+                        .thenBy { it.name }
+                )
+                .take(6)
+        }
+    }
+
+    /** User supplies the four-digit code for a room the picker only knows by name. */
+    fun monitorRoomWithCode(name: String, code: String) {
+        val normalized = code.filter { it.isDigit() }.take(4)
+        if (normalized.length != 4) return
+        viewModelScope.launch {
+            container.roomCodes.remember(name, normalized)
+            refreshRoomShortcuts()
+        }
+        val updated = catalogRooms.map { room ->
+            if (room.name == name && room.code.isBlank()) room.copy(code = normalized) else room
+        }
+        catalogRooms = updated
+        applyClassroomCatalog(updated, Instant.now())
+        useRoom(normalized)
+    }
+
+    private suspend fun mergeManualRoomCodes(rooms: List<JwxtClassroom>): List<JwxtClassroom> {
+        val learned = container.roomCodes.snapshot()
+        if (learned.isEmpty()) return rooms
+        val key = { value: String -> value.trim().replace(Regex("\\s+"), "") }
+        return rooms.map { room ->
+            if (room.code.isNotBlank()) room
+            else learned[key(room.name)]?.let { room.copy(code = it) } ?: room
+        }
+    }
+
+    private fun applyClassroomCatalog(
+        rooms: List<JwxtClassroom>,
+        at: Instant,
+        error: String = ""
+    ) {
+        catalogRooms = rooms
+        val suggestions = suggestClassroomCodes(rooms)
+        _classroomCatalog.update {
+            it.copy(
+                loading = false,
+                total = rooms.size,
+                campuses = container.classrooms.campuses(rooms),
+                refreshedAt = at.toString(),
+                error = error,
+                rooms = rooms.map { room ->
+                    ApiRoom(
+                        roomCode = room.code,
+                        roomName = room.name,
+                        campus = room.campus,
+                        building = room.building,
+                        capacity = room.capacity,
+                        suggestedCode = suggestions[room.key()].orEmpty()
+                    )
+                }
+            )
+        }
+    }
+
+    fun searchRooms(query: String) {
+        val trimmed = query.trim()
+        _search.update { it.copy(query = query, searched = true) }
+        searchJob?.cancel()
+        if (trimmed.isEmpty()) {
+            _search.update { it.copy(rooms = emptyList(), loading = false, error = "") }
+            return
+        }
+        val current = _settings.value
+        if (current?.localMode == true) {
+            if (catalogRooms.isEmpty()) {
+                container.classrooms.cached()?.let { (at, rooms) -> applyClassroomCatalog(rooms, at) }
+            }
+            if (catalogRooms.isEmpty()) {
+                _search.update { it.copy(loading = true, error = "") }
+                ensureClassroomCatalogLoaded()
+                return
+            }
+            val campus = _classroomCatalog.value.selectedCampus
+            val suggestions = suggestClassroomCodes(catalogRooms)
+            val rooms = container.classrooms.search(catalogRooms, trimmed, campus).map { room ->
+                ApiRoom(
+                    roomCode = room.code,
+                    roomName = room.name,
+                    campus = room.campus,
+                    building = room.building,
+                    capacity = room.capacity,
+                    suggestedCode = suggestions[room.key()].orEmpty()
+                )
+            }
+            _search.update {
+                it.copy(
+                    rooms = rooms,
+                    loading = false,
+                    error = if (rooms.isEmpty()) "" else it.error
+                )
+            }
+            return
+        }
+        searchJob = viewModelScope.launch {
+            _search.update { it.copy(loading = true, error = "") }
+            try {
+                val api = container.client(current?.serverUrl.orEmpty())
+                    ?: throw IllegalArgumentException("invalid server url")
+                val rooms = withContext(Dispatchers.IO) { api.rooms(trimmed) }
+                if (_search.value.query.trim() == trimmed) {
+                    _search.update { it.copy(rooms = rooms, loading = false) }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else if (_search.value.query.trim() == trimmed) {
+                    _search.update { it.copy(loading = false, error = ErrorCopy.from(error)) }
+                }
+            } catch (error: Exception) {
+                if (_search.value.query.trim() == trimmed) {
+                    _search.update { it.copy(loading = false, error = ErrorCopy.from(error)) }
+                }
+            }
+        }
+    }
+
+    fun ensureHistoryLoaded() {
+        if (_history.value.events.isEmpty() && !_history.value.loading) loadHistory()
+    }
+
+    fun loadHistory() {
+        viewModelScope.launch {
+            _history.update { it.copy(loading = true) }
+            val events = runCatching { container.history.read() }.getOrDefault(emptyList())
+            _history.value = HistoryUiState(events = events, loading = false)
+        }
+    }
+
+    /** Fetch a fresh QR for the current live activity; gates mirror the server. */
+    fun loadSignQr() {
+        if (!_signAccess.value.proEnabled && !container.signAccess.proEnabled()) {
+            _signQr.value = SignQrState(error = "当前仅支持提醒与名单")
+            return
+        }
+        val view = _today.value.view
+        if (view == null) {
+            _signQr.value = SignQrState(error = "当前没有可交接的签到；有签到后再刷新")
+            return
+        }
+        if (!top.sykesp42.rin.monitor.qrEligible(view)) {
+            _signQr.value = SignQrState(error = "签到还没就绪：先在名单确认，或等人数到安全线")
+            return
+        }
+        if (qrJob?.isActive == true) return
+        qrJob = viewModelScope.launch {
+            _signQr.update { it.copy(loading = true, error = "") }
+            try {
+                val current = container.settings.current()
+                val api = container.monitorApi(current)
+                    ?: throw IllegalStateException("接口不可用")
+                val png = withContext(Dispatchers.IO) { api.qrPng(view.roomCode) }
+                if (_today.value.view?.signId != view.signId) return@launch
+                if (png == null) {
+                    _signQr.value = SignQrState(
+                        error = "人数没到安全线，或签到已结束；旧码已隐藏",
+                        type = view.qrType,
+                        refreshSeconds = view.qrRefreshIntervalSeconds,
+                        effectiveEnd = view.effectiveSignEndAt
+                    )
+                    return@launch
+                }
+                _signQr.value = SignQrState(
+                    png = png,
+                    fetchedAt = Instant.now(),
+                    type = view.qrType,
+                    refreshSeconds = view.qrRefreshIntervalSeconds,
+                    effectiveEnd = view.effectiveSignEndAt
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (error.code == "SIGN_ACCESS_REQUIRED") {
+                    onSignAccessDenied()
+                    _signQr.value = SignQrState(
+                        error = "完整功能已停用；当前仅支持提醒与名单",
+                        type = view.qrType,
+                        refreshSeconds = view.qrRefreshIntervalSeconds,
+                        effectiveEnd = view.effectiveSignEndAt
+                    )
+                } else {
+                    _signQr.value = SignQrState(
+                        error = ErrorCopy.from(error) + "；旧码已隐藏",
+                        type = view.qrType,
+                        refreshSeconds = view.qrRefreshIntervalSeconds,
+                        effectiveEnd = view.effectiveSignEndAt
+                    )
+                }
+            } catch (error: Exception) {
+                _signQr.value = SignQrState(
+                    error = ErrorCopy.from(error) + "；旧码已隐藏",
+                    type = view.qrType,
+                    refreshSeconds = view.qrRefreshIntervalSeconds,
+                    effectiveEnd = view.effectiveSignEndAt
+                )
+            }
+        }
+    }
+
+    fun clearSignQr() {
+        qrJob?.cancel()
+        qrJob = null
+        _signQr.value = SignQrState()
+    }
+
+    /** Terminal sign outcomes, newest first; safe to call on every screen visit. */
+    fun loadAttendance() {
+        viewModelScope.launch { refreshAttendance() }
+    }
+
+    private suspend fun refreshAttendance() {
+        val rows = withContext(Dispatchers.IO) {
+            runCatching { container.attendance.all() }.getOrDefault(emptyList())
+        }
+        _attendance.value = AttendanceUiState(
+            records = rows,
+            courses = top.sykesp42.rin.data.courseAttendance(rows),
+            loaded = true
+        )
+    }
+
+    /** Save the roster receipt and fold a finished activity into the ledger. */
+    private suspend fun recordMonitorView(view: MonitorView): RosterSnapshot? {
+        val snapshot = withContext(Dispatchers.IO) {
+            runCatching { container.rosterStore.save(view) }.getOrNull()
+        }
+        val changed = withContext(Dispatchers.IO) {
+            runCatching { container.attendance.record(view) }.getOrDefault(false)
+        }
+        if (changed) refreshAttendance()
+        return snapshot
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch {
+            container.history.clear()
+            _history.value = HistoryUiState()
+            _messages.emit("记录已清空")
+        }
+    }
+
+    fun ensureThresholdLoaded() {
+        if (thresholdLoaded || _settingsPage.value.thresholdLoading) return
+        loadThreshold()
+    }
+
+    fun loadThreshold() {
+        if (_settingsPage.value.thresholdLoading) return
+        _settingsPage.update { it.copy(thresholdLoading = true, thresholdError = "") }
+        viewModelScope.launch {
+            try {
+                val current = container.settings.current()
+                val api = container.client(current.serverUrl) ?: throw IllegalArgumentException("invalid server url")
+                val value = withContext(Dispatchers.IO) { api.signSettings() }
+                thresholdLoaded = true
+                _settingsPage.update {
+                    it.copy(
+                        threshold = value.rosterThreshold,
+                        minThreshold = value.minThreshold,
+                        maxThreshold = maxOf(value.maxThreshold, 1),
+                        thresholdLoading = false
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _settingsPage.update {
+                        it.copy(
+                            threshold = _today.value.view?.threshold ?: it.threshold,
+                            thresholdLoading = false,
+                            thresholdError = ErrorCopy.from(error)
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _settingsPage.update {
+                    it.copy(
+                        threshold = _today.value.view?.threshold ?: it.threshold,
+                        thresholdLoading = false,
+                        thresholdError = ErrorCopy.from(error)
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveThreshold(value: Int, confirmation: String) {
+        viewModelScope.launch {
+            _settingsPage.update { it.copy(savingThreshold = true, thresholdError = "") }
+            try {
+                val current = container.settings.current()
+                val api = container.client(current.serverUrl) ?: throw IllegalArgumentException("invalid server url")
+                val saved = withContext(Dispatchers.IO) { api.setThreshold(value, confirmation) }
+                thresholdLoaded = true
+                _settingsPage.update { it.copy(threshold = saved, savingThreshold = false) }
+                _messages.emit("阈值已保存：$saved")
+                if (MonitorRuntime.running.value) {
+                    MonitorService.start(container.appContext, REASON_WAKE)
+                } else {
+                    fetchTodayOnce(force = true)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _settingsPage.update {
+                        it.copy(savingThreshold = false, thresholdError = ErrorCopy.from(error))
+                    }
+                }
+            } catch (error: Exception) {
+                _settingsPage.update {
+                    it.copy(savingThreshold = false, thresholdError = ErrorCopy.from(error))
+                }
+            }
+        }
+    }
+
+    private fun restoreSession() {
+        viewModelScope.launch {
+            val current = container.settings.current()
+            if (current.localMode) {
+                _auth.value = AuthState.LoggedIn(
+                    User(id = "", username = "local", displayName = current.rosterName.ifBlank { "本地模式" }, role = "user")
+                )
+                // Local mode has no cloud handshake, but the cached schedule
+                // must still render on cold start; without this the schedule
+                // tab shows blank until the user taps it, and the monitor's
+                // schedule provider has no warm cache to fall back to.
+                bootstrapData()
+                return@launch
+            }
+            if (current.serverUrl.isBlank() || container.sessionStore.load() == null) {
+                _auth.value = AuthState.LoggedOut(
+                    if (MonitorRuntime.authExpired.value) "登录已失效，重新登录" else ""
+                )
+                return@launch
+            }
+            val cached = User(
+                id = "",
+                username = current.username,
+                displayName = current.displayName.ifBlank { current.username.ifBlank { "同学" } },
+                role = ""
+            )
+            _auth.value = AuthState.LoggedIn(cached)
+            val api = container.client(current.serverUrl)
+            if (api == null) {
+                _auth.value = AuthState.LoggedOut("服务地址格式不正确")
+                return@launch
+            }
+            try {
+                val user = withContext(Dispatchers.IO) { api.me() }
+                container.settings.setAccount(user.username, user.displayName)
+                MonitorRuntime.clearAuthExpired()
+                _auth.value = AuthState.LoggedIn(user)
+                bootstrapData()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _messages.emit("连不上服务，先显示上次状态")
+                    bootstrapData()
+                }
+            } catch (error: Exception) {
+                _messages.emit("连不上服务，先显示上次状态")
+                bootstrapData()
+            }
+        }
+    }
+
+    private fun bootstrapData() {
+        fetchTodayOnce()
+        loadSchedule()
+        loadHistory()
+        loadAttendance()
+        loadThreshold()
+        // A cold start must see newly approved or revoked access immediately.
+        refreshSignAccess(force = true)
+    }
+
+    /**
+     * Pull the term-stable datasets once while the JWXT session is freshly
+     * verified, so 课表 / 校历 / 成绩 / 空教室 / 要闻 all survive a later
+     * session expiry. Read-only; a failed fetch keeps the previous cache.
+     */
+    private fun warmLocalCaches() {
+        viewModelScope.launch {
+            val current = container.settings.current()
+            if (!current.localMode) return@launch
+            val connected = withContext(Dispatchers.IO) {
+                container.localJwxtStore.load() != null || container.jwxtCredentialStore.load() != null
+            }
+            if (!connected) return@launch
+            loadTermCourses()
+            loadGrades()
+            ensureCalendarLoaded()
+            ensureCampusNewsLoaded()
+            ensureClassroomCatalogLoaded()
+        }
+    }
+
+    private fun fetchTodayOnce(force: Boolean = false) {
+        if (_auth.value !is AuthState.LoggedIn) return
+        if (todayJob?.isActive == true && !force) return
+        todayJob?.cancel()
+        todayJob = viewModelScope.launch {
+            _today.update { it.copy(loading = true, errorCode = "", errorMessage = "") }
+            try {
+                val current = container.settings.current()
+                val api: MonitorApi = container.monitorApi(current)
+                    ?: container.client(current.serverUrl)
+                    ?: throw IllegalArgumentException("invalid server url")
+                val view = MonitorEngine(api).pollOnce(current.manualCode, current.lastHandledSignId)
+                val saved = recordMonitorView(view)
+                _today.update {
+                    it.copy(
+                        view = view,
+                        viewReceivedAt = Instant.now(),
+                        cachedRoster = saved ?: it.cachedRoster,
+                        loading = false,
+                        errorCode = "",
+                        errorMessage = ""
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiError) {
+                if (ErrorCopy.isAuth(error.code, error.status)) {
+                    expireSession("登录已失效，重新登录")
+                } else {
+                    _today.update {
+                        it.copy(
+                            loading = false,
+                            errorCode = error.code,
+                            errorMessage = ErrorCopy.from(error)
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _today.update {
+                    it.copy(
+                        loading = false,
+                        errorCode = "OFFLINE",
+                        errorMessage = ErrorCopy.from(error)
+                    )
+                }
+            }
+        }
+    }
+
+    private fun configuredFlag(current: AppSettings): Boolean =
+        if (current.localMode) container.localJwxtStore.load() != null else true
+
+    private suspend fun expireSession(reason: String) {
+        authMutex.withLock {
+            if (container.settings.current().localMode) {
+                // Local mode never depends on the cloud login. A stale cloud
+                // token behind the failover must not kick the user out, stop
+                // monitoring or cancel the alarm-only class reminders — just
+                // drop the cloud cookie; monitorApi() then stays pure-local.
+                container.sessionStore.clear()
+                MonitorRuntime.clearAuthExpired()
+                return
+            }
+            if (_auth.value is AuthState.LoggedOut) return
+            container.sessionStore.clear()
+            container.settings.resetForLogout()
+            container.alarms.cancelAll()
+            MonitorService.stop(container.appContext)
+            withContext(Dispatchers.IO) { container.rosterStore.clear() }
+            withContext(Dispatchers.IO) { container.attendance.clear() }
+            withContext(Dispatchers.IO) { container.scheduleChanges.clear() }
+            _attendance.value = AttendanceUiState()
+            HandoffRuntime.clear()
+            HandoffRuntime.clearOutcome()
+            container.handoffJournal.clear()
+            MonitorRuntime.clearAuthExpired()
+            MonitorRuntime.resetView()
+            runCatching { container.history.append(HistoryKind.SESSION_EXPIRED) }
+            _auth.value = AuthState.LoggedOut(reason)
+            _login.value = LoginUiState()
+            _today.value = TodayUiState()
+            _schedule.value = ScheduleUiState()
+            _search.value = SearchUiState()
+            _history.value = HistoryUiState()
+            _settingsPage.value = SettingsUiState()
+            thresholdLoaded = false
+            _messages.emit(reason)
+        }
+    }
+
+    private fun message(text: String) {
+        viewModelScope.launch { _messages.emit(text) }
     }
 
     companion object {
-        fun factory(container: AppContainer): ViewModelProvider.Factory =
-            object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    AppViewModel(container) as T
-            }
+        private const val CALENDAR_CACHE = "school_calendar"
+        private const val TERM_CACHE = "term_courses"
+        private const val GRADES_CACHE = "grades"
+        private const val CLASSROOM_CACHE = "classrooms_v1"
+        private const val CAMPUS_NEWS_CACHE = "campus_news_v1"
+        private val FRESH_FOR: Duration = Duration.ofSeconds(45)
+        private val TERM_CACHE_TTL: Duration = Duration.ofHours(24)
+        private val GRADES_CACHE_TTL: Duration = Duration.ofHours(6)
+        private val CALENDAR_CACHE_TTL: Duration = Duration.ofHours(12)
+        private val CLASSROOM_CACHE_TTL: Duration = Duration.ofHours(24)
+
+        fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
+            initializer { AppViewModel(container) }
+        }
     }
 }

@@ -31,7 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.sykesp42.rin.ui.theme.HeroStyle
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.SurfaceStyle
 import top.sykesp42.rin.ui.theme.ThemeArtImage
 import top.sykesp42.rin.data.PetWeatherSnapshot
@@ -88,7 +88,7 @@ private fun CoverHero(
     weather: PetWeatherSnapshot?,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val shape = MaterialTheme.shapes.large
     if (!spec.hasArt) return
     Box(
@@ -173,7 +173,7 @@ private fun SplitHero(
     weather: PetWeatherSnapshot?,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val shape = MaterialTheme.shapes.large
     if (!spec.hasArt) return
     val outlined = spec.surface == SurfaceStyle.STICKER || spec.surface == SurfaceStyle.PIXEL
@@ -252,7 +252,7 @@ private fun TicketHero(
     weather: PetWeatherSnapshot?,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val shape = MaterialTheme.shapes.large
     if (!spec.hasArt) return
     val hard = spec.surface == SurfaceStyle.PIXEL
@@ -326,7 +326,7 @@ private fun TicketHero(
 /** Campus temperature and humidity, replacing the old theme name on the cover. */
 @Composable
 private fun WeatherStamp(snapshot: PetWeatherSnapshot?, modifier: Modifier = Modifier) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val temp = snapshot?.temperatureC
     val humidity = snapshot?.humidity
     if (temp == null && humidity == null) return
@@ -360,7 +360,7 @@ private fun BookCover(
     week: Int,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val shape = MaterialTheme.shapes.small
     Column(
         modifier = modifier
@@ -415,7 +415,7 @@ private fun CrystalCover(
     week: Int,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val shape = RoundedCornerShape(4.dp, 24.dp, 4.dp, 24.dp)
     Box(
         modifier = modifier

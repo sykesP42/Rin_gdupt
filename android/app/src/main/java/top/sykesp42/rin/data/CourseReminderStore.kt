@@ -40,7 +40,6 @@ data class CourseReminder(
     val volume: Int = 70,
     val volumeEnabled: Boolean = false,
     val vibrate: Boolean = false,
-    val signReminder: Boolean = false,
     val createdAt: String = ""
 ) {
     fun triggerAt(): LocalDateTime? = runCatching {

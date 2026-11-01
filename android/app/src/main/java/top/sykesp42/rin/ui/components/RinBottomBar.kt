@@ -32,7 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.sykesp42.rin.ui.MainTab
 import top.sykesp42.rin.ui.theme.LocalAnimationsEnabled
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.LocalVisualStyle
 import top.sykesp42.rin.ui.theme.SurfaceStyle
 
@@ -48,7 +48,7 @@ fun RinBottomBar(
     onSelect: (MainTab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val animations = LocalAnimationsEnabled.current
     val surface = LocalVisualStyle.current.surface
     val compact = tabs.size <= 2

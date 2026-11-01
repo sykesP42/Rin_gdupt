@@ -2,11 +2,11 @@ package top.sykesp42.rin.ui.schedule
 
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
-import top.sykesp42.rin.data.ManualExam
+import top.sykesp42.rin.data.JwxtExam
 
 /**
  * Parsed exam moment. Unknown pieces stay null/blank so the UI can show the raw
- * text instead of inventing a date or a countdown.
+ * upstream text instead of inventing a date or a countdown.
  */
 data class ExamTime(
     val date: LocalDate? = null,
@@ -15,7 +15,7 @@ data class ExamTime(
 )
 
 data class ExamItem(
-    val exam: ManualExam,
+    val exam: JwxtExam,
     val time: ExamTime,
     val countdown: String
 )
@@ -83,7 +83,7 @@ fun examCountdownLabel(time: ExamTime, today: LocalDate): String {
  * Future/today exams first, then undated ones, then past exams with the most
  * recent first. The next exam is the first dated item in this order.
  */
-fun examItems(exams: List<ManualExam>, today: LocalDate): List<ExamItem> {
+fun examItems(exams: List<JwxtExam>, today: LocalDate): List<ExamItem> {
     val items = exams.map { exam ->
         val time = parseExamTime(exam.time)
         ExamItem(exam, time, examCountdownLabel(time, today))

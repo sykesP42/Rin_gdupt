@@ -61,26 +61,3 @@ private fun parseToken(token: String): List<Int> {
 
 private fun String.toSectionOrNull(): Int? =
     toIntOrNull()?.takeIf { it in MIN_SECTION..MAX_SECTION }
-
-
-/** Start/end minute of each teaching period, shared by the grid and local schedule. */
-val sectionBounds: Map<Int, Pair<Int, Int>> = mapOf(
-    1 to Pair(8 * 60, 8 * 60 + 45),
-    2 to Pair(8 * 60 + 55, 9 * 60 + 40),
-    3 to Pair(10 * 60, 10 * 60 + 45),
-    4 to Pair(10 * 60 + 55, 11 * 60 + 40),
-    5 to Pair(14 * 60 + 30, 15 * 60 + 15),
-    6 to Pair(15 * 60 + 25, 16 * 60 + 10),
-    7 to Pair(16 * 60 + 20, 17 * 60),
-    8 to Pair(17 * 60, 17 * 60 + 50),
-    9 to Pair(19 * 60 + 40, 20 * 60 + 25),
-    10 to Pair(20 * 60 + 35, 21 * 60 + 20)
-)
-
-
-/** First period's clock time for a schedule cell, e.g. "0102" -> "08:00". */
-fun sectionStart(text: String): String {
-    val first = parseSections(text).firstOrNull() ?: return ""
-    val minutes = sectionBounds[first]?.first ?: return ""
-    return "%02d:%02d".format(minutes / 60, minutes % 60)
-}

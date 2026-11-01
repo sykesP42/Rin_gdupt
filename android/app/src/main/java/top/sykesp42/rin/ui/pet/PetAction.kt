@@ -46,7 +46,7 @@ enum class PetAction(
     }
 }
 
-enum class PetEvent { NONE, REMINDER, CHEER, RUSH_TO_CLASS }
+enum class PetEvent { NONE, SIGN_READY, SIGN_SUCCESS, RUSH_TO_CLASS }
 
 data class PetContext(
     val hour: Int,
@@ -61,8 +61,8 @@ data class PetContext(
 object PetDirector {
     fun candidates(context: PetContext): List<PetAction> {
         when (context.event) {
-            PetEvent.REMINDER -> return listOf(PetAction.NOD)
-            PetEvent.CHEER -> return listOf(PetAction.HEART)
+            PetEvent.SIGN_READY -> return listOf(PetAction.NOD)
+            PetEvent.SIGN_SUCCESS -> return listOf(PetAction.HEART)
             PetEvent.RUSH_TO_CLASS -> return listOf(PetAction.WATCH)
             PetEvent.NONE -> Unit
         }

@@ -6,8 +6,9 @@ import top.sykesp42.rin.ui.schedule.ShareStyle
 /**
  * One place that decides what the app is allowed to call the user.
  *
- * With 隐私模式 on, the personal name must not surface anywhere — including
- * share cards — so an unnamed profile gets a stable pseudonym.
+ * With 隐私模式 on, the real name and account id must not surface anywhere —
+ * including share cards — so an unnamed profile gets a stable pseudonym instead
+ * of falling back to the server's display name.
  */
 object Identity {
     private val PSEUDONYMS = listOf("青柠", "白露", "南风", "夏至", "远山", "星野", "木槿", "拾光")

@@ -13,6 +13,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -29,26 +30,36 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
+import java.time.Instant
 import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.AppSettings
+import top.sykesp42.rin.handoff.HandoffRuntime
+import top.sykesp42.rin.handoff.withinHandoffGrace
+import top.sykesp42.rin.monitor.MonitorService
+import top.sykesp42.rin.monitor.REASON_CONFIRM
 import top.sykesp42.rin.ui.AppViewModel
-import top.sykesp42.rin.ui.RinApp
 import top.sykesp42.rin.ui.RinSplash
+import top.sykesp42.rin.ui.SuiSignApp
 import top.sykesp42.rin.ui.theme.CustomThemeColorMode
 import top.sykesp42.rin.ui.theme.CustomThemeFocus
 import top.sykesp42.rin.ui.theme.CustomThemePalette
 import top.sykesp42.rin.ui.theme.CustomThemeState
-import top.sykesp42.rin.ui.theme.RinTheme
+import top.sykesp42.rin.ui.theme.SuiSignTheme
 import top.sykesp42.rin.ui.theme.ThemeMode
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Decided before the window exists: the theme's windowBackground is what the
+        // user sees for the first frames, and Compose cannot have said anything yet.
         setTheme(
-            if (LaunchHint.isDark(this)) R.style.Theme_Rin_Launch_Dark
-            else R.style.Theme_Rin_Launch_Light
+            if (LaunchHint.isDark(this)) R.style.Theme_SuiSign_Launch_Dark
+            else R.style.Theme_SuiSign_Launch_Light
         )
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -56,6 +67,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             val vm: AppViewModel = viewModel(factory = AppViewModel.factory(container))
             val liveSettings by vm.settings.collectAsStateWithLifecycle()
+            // Never block the first frame on DataStore: offline cold starts were
+            // held on a white window for ~12s. Defaults paint immediately and the
+            // stored theme/splash choice applies as soon as the flow arrives.
             val settings = liveSettings ?: AppSettings()
             val mode = ThemeMode.from(settings.theme)
             val customTheme = remember(settings) {
@@ -100,8 +114,8 @@ class MainActivity : ComponentActivity() {
                 label = "app_scale"
             )
 
-            LaunchedEffect(settings.splashEnabled) {
-                if (!settings.splashEnabled) splashVisible = false
+            LaunchedEffect(settings?.splashEnabled) {
+                if (settings?.splashEnabled == false) splashVisible = false
             }
             LaunchedEffect(splashVisible, animationsEnabled) {
                 if (splashVisible) {
@@ -111,7 +125,32 @@ class MainActivity : ComponentActivity() {
                     splashSettled = true
                 }
             }
+            // An OEM process kill during the 60s confirmation must not drop
+            // the receipt: resume the journaled window in the foreground.
+            LaunchedEffect(Unit) {
+                val pending = container.handoffJournal.loadResumable() ?: return@LaunchedEffect
+                HandoffRuntime.begin(pending)
+                runCatching { MonitorService.start(container.appContext, REASON_CONFIRM) }
+            }
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+                    // Pending approval and server-side revocation are only
+                    // visible after a fresh entitlement check.
+                    vm.refreshSignAccess(force = true)
+                    // Returning from WeChat (or an OEM killing only the
+                    // service) must re-arm a still-live window.
+                    val pending = HandoffRuntime.current() ?: return@LifecycleEventObserver
+                    if (withinHandoffGrace(pending, Instant.now())) {
+                        runCatching { MonitorService.start(container.appContext, REASON_CONFIRM) }
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
 
+            // RinSplash owns system-bar contrast until its upward reveal ends.
             if (splashSettled) {
                 SideEffect {
                     view.context.findActivity()?.window?.let { window ->
@@ -123,7 +162,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            RinTheme(
+            SuiSignTheme(
                 mode = mode,
                 animationsEnabled = animationsEnabled,
                 accentOverride = settings.themeAccent,
@@ -145,7 +184,16 @@ class MainActivity : ComponentActivity() {
                                     scaleY = appScale
                                 }
                         ) {
-                            RinApp(vm = vm, settings = settings)
+                            val tabKey = intent?.getStringExtra(top.sykesp42.rin.widget.WidgetShortcuts.EXTRA_TAB)
+                                ?: intent?.data
+                                    ?.takeIf { it.scheme == "rin" && it.host == "tab" }
+                                    ?.lastPathSegment
+                            val shortcutTab = when (tabKey) {
+                                top.sykesp42.rin.widget.WidgetShortcuts.TAB_SCHEDULE -> top.sykesp42.rin.ui.MainTab.SCHEDULE
+                                top.sykesp42.rin.widget.WidgetShortcuts.TAB_SEARCH -> top.sykesp42.rin.ui.MainTab.SEARCH
+                                else -> top.sykesp42.rin.ui.MainTab.TODAY
+                            }
+                            SuiSignApp(vm = vm, settings = settings, initialTab = shortcutTab)
                         }
                         AnimatedVisibility(
                             visible = splashVisible,

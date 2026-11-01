@@ -20,10 +20,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import top.sykesp42.rin.ui.faces.NoticeFaces
-import top.sykesp42.rin.ui.faces.NoticeIcon
-import top.sykesp42.rin.ui.faces.NoticeOutfit
-import top.sykesp42.rin.ui.faces.NoticeIcons
+import top.sykesp42.rin.monitor.NoticeFaces
+import top.sykesp42.rin.monitor.NoticeIcon
+import top.sykesp42.rin.monitor.NoticeOutfit
+import top.sykesp42.rin.monitor.NoticeIcons
 
 /**
  * The same Rin face the notification shade shows, so a state reads identically in

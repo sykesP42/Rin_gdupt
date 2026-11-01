@@ -57,7 +57,7 @@ import androidx.compose.ui.unit.sp
 import top.sykesp42.rin.ui.theme.AccentPreset
 import top.sykesp42.rin.ui.theme.CustomThemeColorMode
 import top.sykesp42.rin.ui.theme.CustomThemeFocus
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.LocalVisualStyle
 import top.sykesp42.rin.ui.theme.ThemeCatalog
 import top.sykesp42.rin.ui.theme.ThemeCollection
@@ -319,7 +319,7 @@ fun ThemePickerSheet(
     onDismiss: () -> Unit
 ) {
     var filter by rememberSaveable { mutableStateOf(selected.spec.collection) }
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -407,7 +407,7 @@ private fun CollectionChip(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier
             .clip(CircleShape)
@@ -440,7 +440,7 @@ fun AccentColorRow(
     modifier: Modifier = Modifier
 ) {
     val visual = LocalVisualStyle.current
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val nativeSignal = remember(visual.spec) { ThemeCatalog.colorsFor(visual.spec).signal }
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -464,7 +464,7 @@ fun AccentColorRow(
 private fun AccentSwatch(
     preset: AccentPreset,
     selected: Boolean,
-    nativeColors: top.sykesp42.rin.ui.theme.RinColors,
+    nativeColors: top.sykesp42.rin.ui.theme.SuiSignColors,
     currentSign: Color,
     onClick: () -> Unit
 ) {
@@ -514,7 +514,7 @@ fun CornerStyleRow(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val selected = ThemeCorners.from(value)
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -579,7 +579,7 @@ private fun SegmentedStyleRow(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp)

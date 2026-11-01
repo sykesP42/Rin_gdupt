@@ -6,7 +6,7 @@ import androidx.compose.ui.graphics.Color
  * The four approved campus moods. Values mirror the design overview:
  * 晴空映像 / 绀蓝书院 / 琉璃标本 / 月白电台. Keep text/fill pairs AA-safe.
  */
-val SkyRinColors = RinColors(
+val SkySuiSignColors = SuiSignColors(
     canvas = Color(0xFFF8FBFC),
     surface = Color(0xFFFFFFFF),
     surfaceRaised = Color(0xFFFFFFFF),
@@ -23,7 +23,7 @@ val SkyRinColors = RinColors(
     warm = Color(0xFFE5F2F7)
 )
 
-val BookRinColors = RinColors(
+val BookSuiSignColors = SuiSignColors(
     canvas = Color(0xFFFAF7F1),
     surface = Color(0xFFFFFDF8),
     surfaceRaised = Color(0xFFF4EFE6),
@@ -40,7 +40,7 @@ val BookRinColors = RinColors(
     warm = Color(0xFFEEEAE1)
 )
 
-val CrystalRinColors = RinColors(
+val CrystalSuiSignColors = SuiSignColors(
     canvas = Color(0xFFF8F9FF),
     surface = Color(0xFFFFFFFF),
     surfaceRaised = Color(0xFFF3F0FC),
@@ -57,7 +57,7 @@ val CrystalRinColors = RinColors(
     warm = Color(0xFFEEEAFB)
 )
 
-val RadioRinColors = RinColors(
+val RadioSuiSignColors = SuiSignColors(
     canvas = Color(0xFF161F32),
     surface = Color(0xFF202C41),
     surfaceRaised = Color(0xFF28364E),

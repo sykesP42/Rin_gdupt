@@ -46,7 +46,7 @@ import top.sykesp42.rin.ui.schedule.classSlotState
 import top.sykesp42.rin.ui.schedule.courseCountLabel
 import top.sykesp42.rin.ui.schedule.nextUpcomingIndex
 import top.sykesp42.rin.ui.schedule.restHint
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.courseAccent
 import top.sykesp42.rin.ui.theme.courseTint
 
@@ -64,7 +64,7 @@ internal fun WeekAgenda(
     onCourseTap: (ApiScheduleEvent) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val dark = colors.canvas.luminance() < 0.4f
     val hPad = if (fullscreen) 20.dp else 24.dp
     val listState = rememberLazyListState()
@@ -107,23 +107,6 @@ internal fun WeekAgenda(
 }
 
 @Composable
-internal fun RestBanner(text: String) {
-    val colors = LocalRinColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "· $text ·",
-            color = colors.textSecondary,
-            style = MaterialTheme.typography.labelSmall
-        )
-    }
-}
-
-@Composable
 private fun DaySection(
     day: ApiScheduleDay,
     today: LocalDate?,
@@ -132,7 +115,7 @@ private fun DaySection(
     dark: Boolean,
     onCourseTap: (ApiScheduleEvent) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val date = runCatching { LocalDate.parse(day.date) }.getOrNull()
     val isToday = today != null && day.date == today.toString()
     val events = day.events.sortedBy { it.startTime }
@@ -208,7 +191,7 @@ private fun BoxDot() {
         Modifier
             .width(4.dp)
             .height(4.dp)
-            .background(LocalRinColors.current.accent, CircleShape)
+            .background(LocalSuiSignColors.current.accent, CircleShape)
     )
 }
 
@@ -221,7 +204,7 @@ private fun CourseAgendaRow(
     dark: Boolean,
     onTap: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val accent = courseAccent(event.courseName, dark)
     val tint = courseTint(event.courseName, dark)
     val isCurrent = slot == ClassSlotState.CURRENT

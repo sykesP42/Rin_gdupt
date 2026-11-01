@@ -1,20 +1,16 @@
 package top.sykesp42.rin.jwxt
 
 import android.annotation.SuppressLint
-import android.webkit.JavascriptInterface
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.ViewGroup
+import android.view.View
 import android.webkit.CookieManager
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -23,22 +19,26 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import java.net.URI
+import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.LocalJwxtApi
+import top.sykesp42.rin.data.SessionCookie
+import top.sykesp42.rin.data.WaAttendanceApi
 
 /**
- * Read-only JWXT login. The user signs in on the school's own web page; the
- * activity only captures the resulting cookie and hands it back as
- * [EXTRA_COOKIE]. No password is read, stored or posted by this app.
+ * Embedded JWXT login, styled after the app's dark design tokens.
  *
- * Deliberately read-only: it captures the session and nothing else. No
- * sign-in automation, no server of our own, no account storage.
+ * Layout follows the product rule "primary action in the thumb zone": the
+ * address bar stays a compact top strip (inset-safe), the WebView fills the
+ * middle, and the primary 连接 action is a full-width bottom button that
+ * never collides with the system status bar or its overlays.
  */
 class JwxtLoginActivity : Activity() {
 
@@ -46,33 +46,45 @@ class JwxtLoginActivity : Activity() {
     private lateinit var connectButton: Button
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var verifying = false
-    /** Direct JWXT failed once; the WebVPN portal took over. */
-    private var fellBackToWebVpn = false
-    // Credentials as typed on the school page, kept only in memory until the
-    // session verifies; then they land in the Keystore-encrypted store for the
-    // next login's autofill.
+    private var captured = false
+    private var attendanceMode = false
+    private var waAttempts = 0
+    private var autofilled = false
+
+    // Typed credentials reported by the injected input hook. Volatile: the
+    // JavascriptInterface callback runs on the WebView's JavaBridge thread.
     @Volatile private var rememberedUser = ""
     @Volatile private var rememberedPass = ""
-    private var autofilled = false
-    private var captured = false
 
-    /** Bridge for the page-side hook: pushes what the user types. */
-    private inner class RinCred {
-        @JavascriptInterface
+    /** JS bridge: the injected credential hook reports typed values here. */
+    private class CredBridge(private val sink: (String, String) -> Unit) {
+        @android.webkit.JavascriptInterface
         fun onInput(user: String, pass: String) {
-            rememberedUser = user.orEmpty().trim()
-            rememberedPass = pass.orEmpty()
+            if (user.isNotBlank() && pass.isNotBlank() && user.length <= 64 && pass.length <= 64) {
+                sink(user, pass)
+            }
         }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val configured = intent.getStringExtra(EXTRA_BASE_URL).orEmpty().trim().ifBlank { DEFAULT_BASE }
-        // Go straight to the school's own JWXT login. Campus Wi-Fi (or an
-        // existing VPN) reaches it directly; only when that fails do we fall
-        // back to the WebVPN portal, which wraps the same page.
-        val startUrl = configured
+        attendanceMode = intent.getBooleanExtra(EXTRA_ATTENDANCE, false)
+        val container = AppContainer.get(this)
+        val configured = kotlinx.coroutines.runBlocking {
+            container.settings.current().jwxtBaseUrl
+        }.ifBlank { DEFAULT_BASE }
+        // Campus JWXT is unreachable from carrier networks; the WebVPN portal
+        // is the universal entry (cookies survive, so an existing session
+        // resumes straight into the portal). Attendance mode goes straight to
+        // the school's attendance portal and captures its SSO token.
+        val startUrl = if (attendanceMode) {
+            ATTENDANCE_URL
+        } else if (configured == DEFAULT_BASE) {
+            WEBVPN_ENTRY
+        } else {
+            configured
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -80,16 +92,40 @@ class JwxtLoginActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // Compact hint strip: what this page does and does not touch.
-        root.addView(
-            TextView(this).apply {
-                text = "在学校页面登录后自动连接。账号密码只保存在本机加密存储里，用于下次自动填充；只读课表。"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(COLOR_TEXT_SECONDARY)
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-            }
+        // -- address strip (secondary action; compact, inset-safe) ----------
+        val addressStrip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(COLOR_SURFACE)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        val bar = EditText(this).apply {
+            hint = "地址 · 校外填 WebVPN 入口"
+            setText(startUrl)
+            maxLines = 1
+            setSingleLine(true)
+            setTextColor(COLOR_TEXT)
+            setHintTextColor(COLOR_TEXT_SECONDARY)
+            background = roundedStroke(COLOR_SURFACE_RAISED, dp(9))
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        }
+        val go = Button(this).apply {
+            text = "前往"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(COLOR_TEXT)
+            background = roundedStroke(COLOR_SURFACE_RAISED, dp(9))
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            setOnClickListener { load(bar.text.toString().trim()) }
+        }
+        addressStrip.addView(
+            bar,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         )
+        addressStrip.addView(go)
+        root.addView(addressStrip)
 
+        // -- web content ----------------------------------------------------
         webView = WebView(this)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         webView.settings.apply {
@@ -98,72 +134,65 @@ class JwxtLoginActivity : Activity() {
             cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = USER_AGENT
         }
-        webView.addJavascriptInterface(RinCred(), "RinCred")
+        webView.addJavascriptInterface(
+            CredBridge { user, pass ->
+                rememberedUser = user
+                rememberedPass = pass
+            },
+            "RinCred"
+        )
         webView.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView, url: String) {
-                refreshConnectState(url)
-                injectCredentialHook()
-                maybeAutofill()
-                maybeCapture(url)
-            }
-
-            override fun onReceivedError(
-                view: WebView,
-                request: WebResourceRequest,
-                error: WebResourceError
-            ) {
-                if (!request.isForMainFrame) return
-                if (fellBackToWebVpn) return
-                // Direct campus access failed (mobile data / off campus):
-                // retry once through the WebVPN portal, which wraps the page.
-                fellBackToWebVpn = true
-                Toast.makeText(
-                    this@JwxtLoginActivity,
-                    "直连教务失败，改用 WebVPN 入口",
-                    Toast.LENGTH_SHORT
-                ).show()
-                view.post { load(WEBVPN_ENTRY) }
+            override fun onPageFinished(view: WebView, finishedUrl: String) {
+                if (attendanceMode) {
+                    captureWaToken()
+                } else {
+                    injectCredentialHook()
+                    maybeCapture(finishedUrl)
+                    maybeAutofill(finishedUrl)
+                }
             }
         }
         root.addView(
             webView,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
         )
 
+        // -- primary action bar (thumb zone) ---------------------------------
         val actionBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.VERTICAL
             setBackgroundColor(COLOR_SURFACE)
-            setPadding(dp(12), dp(8), dp(12), dp(10))
+            setPadding(dp(16), dp(12), dp(16), dp(14))
         }
-        val cancel = Button(this).apply {
-            text = "取消"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(COLOR_TEXT)
-            background = roundedStroke(COLOR_SURFACE_RAISED, dp(12))
-            setPadding(dp(18), dp(10), dp(18), dp(10))
-            setOnClickListener { finish() }
-        }
+        actionBar.addView(
+            TextView(this).apply {
+                text = if (attendanceMode) {
+                    "登录考勤系统后点下方按钮完成连接；用于读取本人官方考勤记录。"
+                } else {
+                    "登录到教务页面后点下方按钮完成连接；校外先在地址栏进 WebVPN 登录。"
+                }
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(COLOR_TEXT_SECONDARY)
+            }
+        )
         connectButton = Button(this).apply {
-            text = "完成连接"
-            isEnabled = false
+            text = if (attendanceMode) "连接考勤系统" else "连接教务会话"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(COLOR_PRIMARY_TEXT)
             background = roundedFill(COLOR_PRIMARY_BG, dp(14))
-            setPadding(0, dp(12), 0, dp(12))
-            setOnClickListener { connect() }
+            setPadding(0, dp(13), 0, dp(13))
+            setOnClickListener { if (attendanceMode) captureWaNow() else captureNow() }
         }
         actionBar.addView(
-            cancel,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { rightMargin = dp(10) }
-        )
-        actionBar.addView(
             connectButton,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(8) }
         )
         root.addView(actionBar)
         setContentView(root)
@@ -179,47 +208,124 @@ class JwxtLoginActivity : Activity() {
         webView.loadUrl(target)
     }
 
-    /** A cookie on the current page is necessary but not sufficient to connect. */
-    private fun refreshConnectState(url: String) {
-        val header = CookieManager.getInstance().getCookie(url).orEmpty()
-        connectButton.isEnabled = header.isNotBlank()
-    }
-
     /**
-     * Verify the captured cookie against the read-only timetable before
-     * returning, so the user does not land on a "已连接" state that cannot
-     * actually read anything.
+     * Explicit capture: read the CURRENT frame URL (framesets never re-fire
+     * onPageFinished when inner iframes navigate), verify the schedule, save.
      */
-    private fun connect() {
+    private fun captureNow() {
         if (verifying) return
-        val pageUrl = webView.url ?: return
-        val header = CookieManager.getInstance().getCookie(pageUrl).orEmpty()
-        if (header.isBlank()) {
-            Toast.makeText(this, "还没看到登录凭据，先完成登录", Toast.LENGTH_SHORT).show()
-            return
-        }
         verifying = true
         connectButton.isEnabled = false
         connectButton.text = "验证中…"
         scope.launch {
-            val verified = candidateBases(pageUrl).firstOrNull { base ->
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        LocalJwxtApi(base, cookieHeader = { header }).overview()
-                    }.isSuccess
+            val href = withContext(Dispatchers.Main) {
+                suspendCancellableCoroutine { continuation ->
+                    webView.evaluateJavascript("(function(){return location.href})()") { value ->
+                        continuation.resume(value?.trim()?.removePrefix("\"")?.removeSuffix("\"").orEmpty()) { }
+                    }
+                }
+            }
+            trace("capture href=$href")
+            val raw = CookieManager.getInstance().getCookie(href).orEmpty()
+            val container = AppContainer.get(this@JwxtLoginActivity)
+            var verified: Pair<String, String>? = null
+            for (base in candidateBases(href)) {
+                val api = LocalJwxtApi(base, cookieHeader = { raw })
+                val result = withContext(Dispatchers.IO) { runCatching { api.overview() } }
+                val outcome = result.fold({ "ok" }, { (it.message ?: "fail").take(120) })
+                trace("capture try $base -> $outcome")
+                if (result.isSuccess) {
+                    verified = base to raw
+                    break
                 }
             }
             if (verified != null) {
-                setResult(
-                    RESULT_OK,
-                    Intent().putExtra(EXTRA_COOKIE, header).putExtra(EXTRA_BASE_URL, verified)
-                )
+                val (base, cookie) = verified
+                persistVerified(container, base, cookie)
+                Toast.makeText(this@JwxtLoginActivity, "教务已连接", Toast.LENGTH_SHORT).show()
                 finish()
             } else {
+                Toast.makeText(
+                    this@JwxtLoginActivity,
+                    "验证失败：确认已登录并停在教务页面",
+                    Toast.LENGTH_LONG
+                ).show()
+                connectButton.isEnabled = true
+                connectButton.text = "连接教务会话"
+                verifying = false
+            }
+        }
+    }
+
+    /**
+     * Attendance mode: the wa portal mints its JWT during SSO and keeps it in
+     * sessionStorage["t"]. Poll briefly because the SPA finishes its own
+     * ticket exchange after the page load event.
+     */
+    private fun captureWaNow() {
+        if (verifying) return
+        waAttempts = 0
+        connectButton.isEnabled = false
+        connectButton.text = "读取考勤登录态…"
+        captureWaToken()
+        webView.postDelayed({
+            if (!verifying && !isFinishing) {
+                connectButton.isEnabled = true
+                connectButton.text = "连接考勤系统"
+                Toast.makeText(
+                    this@JwxtLoginActivity,
+                    "还没检测到考勤登录，先在页面完成登录",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }, 8_000)
+    }
+
+    private fun captureWaToken() {
+        if (verifying || isFinishing) return
+        webView.evaluateJavascript(
+            "(function(){try{return sessionStorage.getItem('t')||''}catch(e){return ''}})()"
+        ) { value ->
+            val token = value?.trim()?.removePrefix("\"")?.removeSuffix("\"")
+                ?.takeIf { it.isNotBlank() && it != "null" }
+            if (token == null) {
+                if (waAttempts < 10) {
+                    waAttempts++
+                    webView.postDelayed({ captureWaToken() }, 1_500)
+                }
+                return@evaluateJavascript
+            }
+            persistWaToken(token)
+        }
+    }
+
+    private fun persistWaToken(token: String) {
+        if (verifying) return
+        verifying = true
+        connectButton.isEnabled = false
+        connectButton.text = "验证考勤会话…"
+        val container = AppContainer.get(this)
+        scope.launch {
+            val api = container.waAttendance
+            val userId = withContext(Dispatchers.IO) { api.decodeUserId(token) }
+            val session = WaAttendanceApi.Session(userId = userId, token = token)
+            val ok = withContext(Dispatchers.IO) { api.verify(session) }
+            if (ok) {
+                container.waSessionStore.save(SessionCookie(name = userId, value = token))
+                val probe = withContext(Dispatchers.IO) { api.probeAbsence(session) }
+                trace("wa connected user=$userId probe=$probe")
+                Toast.makeText(this@JwxtLoginActivity, "考勤系统已连接", Toast.LENGTH_SHORT).show()
+                finish()
+            } else {
+                trace("wa verify failed")
                 verifying = false
                 connectButton.isEnabled = true
-                connectButton.text = "完成连接"
-                Toast.makeText(this@JwxtLoginActivity, "验证失败：确认已登录并停在教务首页", Toast.LENGTH_LONG).show()
+                connectButton.text = "连接考勤系统"
+                Toast.makeText(
+                    this@JwxtLoginActivity,
+                    "考勤会话验证失败，确认页面已登录",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
@@ -229,8 +335,10 @@ class JwxtLoginActivity : Activity() {
      * password never passes through adb, logs or the clipboard. The page's own
      * submit handler still encrypts it; the user still solves any slider.
      */
-    private fun maybeAutofill() {
+    private fun maybeAutofill(url: String) {
         if (autofilled) return
+        // The WebVPN-wrapped URL often has no "login" in it; try every page
+        // and let the field probing decide.
         attemptAutofill(0)
     }
 
@@ -238,14 +346,17 @@ class JwxtLoginActivity : Activity() {
     private fun attemptAutofill(attempt: Int) {
         if (autofilled || attempt > 5 || isFinishing) return
         val credential = runCatching {
-            top.sykesp42.rin.data.AppContainer.get(this).jwxtCredentialStore.load()
+            AppContainer.get(this).jwxtCredentialStore.load()
         }.getOrNull()
-        if (credential == null || credential.name.isBlank() || credential.value.isBlank()) return
+        if (credential == null || credential.name.isBlank() || credential.value.isBlank()) {
+            trace("autofill skipped: no saved credential")
+            return
+        }
         val user = org.json.JSONObject.quote(credential.name)
         val pass = org.json.JSONObject.quote(credential.value)
         val js = """
             (function(){
-              var u=${'$'}user, p=${'$'}pass;
+              var u=$user, p=$pass;
               var docs=[];
               try{ docs.push(document); }catch(e){}
               try{
@@ -285,20 +396,38 @@ class JwxtLoginActivity : Activity() {
         webView.evaluateJavascript(js) { result ->
             if (result == "true") {
                 autofilled = true
+                trace("autofill ok attempt=$attempt")
                 Toast.makeText(
                     this@JwxtLoginActivity,
                     "已填入本机保存的账号密码；完成滑块后登录",
                     Toast.LENGTH_SHORT
                 ).show()
             } else {
+                trace("autofill miss attempt=$attempt")
                 webView.postDelayed({ attemptAutofill(attempt + 1) }, 1_200L + attempt * 800L)
             }
         }
     }
 
-    /** Injected on every page load: records typed credentials as the user TYPES. */
-    private fun injectCredentialHook() {
-        webView.evaluateJavascript(CRED_HOOK_JS, null)
+    /** Direct host, or the WebVPN-wrapped form (…/https/<token>/…). */
+    private fun candidateBases(pageUrl: String): List<String> {
+        val result = LinkedHashSet<String>()
+        runCatching { java.net.URI(pageUrl) }.getOrNull()?.let { uri ->
+            val scheme = uri.scheme ?: "https"
+            val host = uri.host ?: return@let
+            result.add("$scheme://$host")
+            val path = uri.path.orEmpty()
+            val marker = "/https/"
+            val markerAt = path.indexOf(marker)
+            if (markerAt >= 0) {
+                val rest = path.substring(markerAt + marker.length)
+                val token = rest.substringBefore('/')
+                if (token.isNotBlank()) {
+                    result.add("$scheme://$host$marker$token")
+                }
+            }
+        }
+        return result.toList()
     }
 
     /** After any page load, opportunistically capture when a session exists. */
@@ -309,30 +438,22 @@ class JwxtLoginActivity : Activity() {
         if (raw.isBlank()) return
         captured = true
         scope.launch {
-            val base = candidateBases(pageUrl).firstOrNull { candidate ->
-                withContext(Dispatchers.IO) {
-                    runCatching { LocalJwxtApi(candidate, cookieHeader = { raw }).overview() }.isSuccess
+            val candidates = candidateBases(pageUrl)
+            var verified: Pair<String, String>? = null
+            for (base in candidates) {
+                val api = LocalJwxtApi(base, cookieHeader = { raw })
+                val ok = withContext(Dispatchers.IO) {
+                    runCatching { api.overview() }.isSuccess
+                }
+                if (ok) {
+                    verified = base to raw
+                    break
                 }
             }
-            if (base != null) {
-                // Remember the typed pair for the next login, Keystore-encrypted.
-                if (rememberedUser.isNotBlank() && rememberedPass.isNotBlank()) {
-                    runCatching {
-                        top.sykesp42.rin.data.AppContainer.get(this@JwxtLoginActivity)
-                            .jwxtCredentialStore.save(
-                                top.sykesp42.rin.data.SessionCookie(name = rememberedUser, value = rememberedPass)
-                            )
-                    }
-                }
-                runCatching {
-                    top.sykesp42.rin.data.AppContainer.get(this@JwxtLoginActivity)
-                        .jwxtSessions.save(top.sykesp42.rin.data.SessionCookie("Cookie", raw))
-                }
+            if (verified != null) {
+                val (base, cookie) = verified
+                persistVerified(AppContainer.get(this@JwxtLoginActivity), base, cookie)
                 Toast.makeText(this@JwxtLoginActivity, "教务已连接", Toast.LENGTH_SHORT).show()
-                setResult(
-                    RESULT_OK,
-                    Intent().putExtra(EXTRA_COOKIE, raw).putExtra(EXTRA_BASE_URL, base)
-                )
                 finish()
             } else {
                 captured = false
@@ -340,27 +461,42 @@ class JwxtLoginActivity : Activity() {
         }
     }
 
-    /** Direct host, or the WebVPN-wrapped form (…/https/<token>/…). */
-    private fun candidateBases(pageUrl: String): List<String> {
-        val result = LinkedHashSet<String>()
-        runCatching { URI(pageUrl) }.getOrNull()?.let { uri ->
-            val scheme = uri.scheme ?: "https"
-            val host = uri.host ?: return@let
-            result.add("$scheme://$host")
-            val path = uri.path.orEmpty()
-            val marker = "/https/"
-            val markerAt = path.indexOf(marker)
-            if (markerAt >= 0) {
-                val rest = path.substring(markerAt + marker.length)
-                val token = rest.substringBefore('/')
-                if (token.isNotBlank()) result.add("$scheme://$host$marker$token")
-            }
-        }
-        return result.toList()
+    override fun onBackPressed() {
+        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
 
-    override fun onBackPressed() {
-        if (this::webView.isInitialized && webView.canGoBack()) webView.goBack() else super.onBackPressed()
+    /**
+     * Record credentials as the user TYPES, never at submit time: the CAS
+     * page encrypts the password field in JS before submitting, so a submit
+     * hook would read ciphertext. Capture-phase listeners survive pages that
+     * stop propagation, and `change` covers autofill. Prefers user-ish fields
+     * (学号/账号/user/…) over arbitrary text inputs like captchas; only pushes
+     * once both a username and a password are known.
+     */
+    private fun injectCredentialHook() {
+        webView.evaluateJavascript(CRED_HOOK_JS, null)
+    }
+
+    /** Cookie + base URL + remembered credentials, all through one door. */
+    private suspend fun persistVerified(container: AppContainer, base: String, cookie: String) {
+        container.adoptJwxtSession(cookie)
+        if (rememberedUser.isNotBlank() && rememberedPass.isNotBlank()) {
+            container.jwxtCredentialStore.save(
+                top.sykesp42.rin.data.SessionCookie(name = rememberedUser.trim(), value = rememberedPass)
+            )
+        }
+        runCatching { container.settings.setJwxtBaseUrl(base) }
+        runCatching { container.settings.setJwxtConnectedAt(Instant.now().toString()) }
+        runCatching { container.settings.setJwxtNeedsLogin(false) }
+        container.noteJwxtHealthy()
+        runCatching { top.sykesp42.rin.monitor.SessionKeeper.poke(this) }
+        // Debug builds discover the student attendance page with this fresh
+        // cookie; release builds have no receiver for the action.
+        runCatching {
+            sendBroadcast(
+                Intent("top.sykesp42.rin.debug.PROBE_ATTENDANCE").setPackage(packageName)
+            )
+        }
     }
 
     override fun onDestroy() {
@@ -385,19 +521,31 @@ class JwxtLoginActivity : Activity() {
             setStroke(dp(1), COLOR_BORDER)
         }
 
+    private fun trace(line: String) {
+        runCatching {
+            java.io.File(filesDir, "jwxt_trace.txt")
+                .appendText(System.currentTimeMillis().toString() + " " + line + "\n")
+        }
+    }
+
     companion object {
-        const val EXTRA_BASE_URL = "base_url"
-        const val EXTRA_COOKIE = "cookie"
+        fun intent(context: Context, attendance: Boolean = false): Intent =
+            Intent(context, JwxtLoginActivity::class.java)
+                .putExtra(EXTRA_ATTENDANCE, attendance)
 
-        fun intent(context: Context, baseUrl: String): Intent =
-            Intent(context, JwxtLoginActivity::class.java).putExtra(EXTRA_BASE_URL, baseUrl)
-
+        private const val EXTRA_ATTENDANCE = "attendance_mode"
+        private const val ATTENDANCE_URL = "https://wa.gdupt.edu.cn/"
         private const val DEFAULT_BASE = "https://jwxt.gdupt.edu.cn"
+        private const val WEBVPN_ENTRY = "https://webvpn2.gdupt.edu.cn"
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/124 SuiSign/0.1.0"
 
         /**
          * Injected on every page load: records typed 学号/密码 as the user
          * TYPES (submit-time reads see CAS-ciphertext), preferring user-ish
-         * fields over captcha boxes. Both input orders push.
+         * fields over captcha boxes; Android persists it on verify success.
+         * Both input orders push (username-first and password-first), and an
+         * unknown username falls back to scanning pre-filled user-ish fields.
          */
         val CRED_HOOK_JS = """
             (function(){
@@ -448,10 +596,8 @@ class JwxtLoginActivity : Activity() {
               document.addEventListener('change', track, true);
             })()
         """.trimIndent()
-        private const val WEBVPN_ENTRY = "https://webvpn2.gdupt.edu.cn"
-        private const val USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Rin/1.0"
 
+        // SuiSign dark tokens (ui/theme/Tokens.kt).
         private val COLOR_CANVAS = 0xFF0B0E11.toInt()
         private val COLOR_SURFACE = 0xFF11161A.toInt()
         private val COLOR_SURFACE_RAISED = 0xFF181E23.toInt()

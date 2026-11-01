@@ -45,7 +45,7 @@ import top.sykesp42.rin.ui.schedule.ShareStyle
 import top.sykesp42.rin.ui.schedule.WeekExport
 import top.sykesp42.rin.ui.schedule.WeekLoad
 import top.sykesp42.rin.ui.schedule.WeekdayLoad
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 /** 学期报告: term-wide numbers, charts and fun stats, shareable as one card. */
 @Composable
@@ -57,7 +57,7 @@ internal fun SemesterReportSheet(
     appVersion: String,
     onDismiss: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -162,7 +162,7 @@ internal fun SemesterReportSheet(
 
 @Composable
 private fun StatGrid(stats: List<ReportStat>) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         stats.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -210,7 +210,7 @@ private fun ReportSection(
     meta: String? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(modifier = Modifier.fillMaxWidth().padding(top = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -237,7 +237,7 @@ private fun ReportSection(
 
 @Composable
 private fun WeekBars(weeks: List<WeekLoad>, currentWeek: Int) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val max = weeks.maxOfOrNull { it.sessions }?.coerceAtLeast(1) ?: 1
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -285,7 +285,7 @@ private fun WeekBars(weeks: List<WeekLoad>, currentWeek: Int) {
 
 @Composable
 private fun WeekdayBars(days: List<WeekdayLoad>) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val max = days.maxOfOrNull { it.sessions }?.coerceAtLeast(1) ?: 1
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         days.forEach { day ->
@@ -327,7 +327,7 @@ private fun WeekdayBars(days: List<WeekdayLoad>) {
 
 @Composable
 private fun PeriodBars(periods: List<PeriodLoad>) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val max = periods.maxOfOrNull { it.sessions }?.coerceAtLeast(1) ?: 1
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         periods.forEach { period ->
@@ -366,7 +366,7 @@ private fun PeriodBars(periods: List<PeriodLoad>) {
 
 @Composable
 private fun CourseBars(courses: List<CourseLoad>) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val max = courses.maxOfOrNull { it.sessions }?.coerceAtLeast(1) ?: 1
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         courses.forEach { course ->
@@ -415,7 +415,7 @@ private fun CourseBars(courses: List<CourseLoad>) {
 
 @Composable
 private fun StatRows(rows: List<ReportRow>) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         rows.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

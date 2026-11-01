@@ -27,8 +27,8 @@ data class PetWeatherSnapshot(
 )
 
 /**
- * Campus weather for the pet scenes. Coordinates are a fixed campus city, not
- * the device's, so this never needs a location permission or personal data.
+ * Campus weather for the pet scenes. Coordinates are the school's, not the
+ * device's, so this never needs a location permission or personal data.
  */
 class PetWeatherRepository(
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -56,7 +56,7 @@ class PetWeatherRepository(
     private fun fetch(): PetWeatherSnapshot {
         val request = Request.Builder()
             .url(ENDPOINT)
-            .header("User-Agent", "Rin/1.0")
+            .header("User-Agent", "SuiSign/1.0")
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("weather http ${response.code}")

@@ -17,7 +17,7 @@ import top.sykesp42.rin.data.ApiScheduleDay
 import top.sykesp42.rin.data.ApiScheduleEvent
 import top.sykesp42.rin.ui.screens.GridSpan
 import top.sykesp42.rin.ui.screens.buildSpans
-import top.sykesp42.rin.ui.schedule.sectionBounds
+import top.sykesp42.rin.ui.screens.sectionBounds
 import top.sykesp42.rin.ui.theme.courseAccent
 
 /** Flat colours handed to the exporter so it never touches Compose state. */
@@ -144,7 +144,7 @@ private class CardPainter(
     private fun drawFooter(canvas: Canvas, width: Float, height: Float) {
         text(false, palette.textSecondary, 22f)
         paint.alpha = 120
-        val label = "Rin v$version"
+        val label = "Rin+ v$version"
         canvas.drawText(label, width - paint.measureText(label) - 34f, height - 18f, paint)
         paint.alpha = 255
     }

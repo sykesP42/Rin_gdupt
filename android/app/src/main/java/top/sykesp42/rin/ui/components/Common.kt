@@ -84,20 +84,21 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import top.sykesp42.rin.data.CourseOverride
 import top.sykesp42.rin.R
-import top.sykesp42.rin.ui.faces.NoticeFaces
-import top.sykesp42.rin.ui.faces.NoticeSlot
-import top.sykesp42.rin.ui.theme.DarkRinColors
-import top.sykesp42.rin.ui.theme.LightRinColors
+import top.sykesp42.rin.domain.State
+import top.sykesp42.rin.monitor.NoticeFaces
+import top.sykesp42.rin.monitor.NoticeSlot
+import top.sykesp42.rin.ui.theme.DarkSuiSignColors
+import top.sykesp42.rin.ui.theme.LightSuiSignColors
 import top.sykesp42.rin.ui.theme.LocalAnimationsEnabled
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.LocalVisualStyle
-import top.sykesp42.rin.ui.theme.RinRinColors
+import top.sykesp42.rin.ui.theme.RinSuiSignColors
 import top.sykesp42.rin.ui.theme.resolveAppearance
 import top.sykesp42.rin.ui.theme.Spacing
 import top.sykesp42.rin.ui.theme.ThemeMode
 import androidx.compose.ui.graphics.asImageBitmap
 
-/** Per-course display overrides, provided app-wide from [RinTheme]. */
+/** Per-course display overrides, provided app-wide from [SuiSignTheme]. */
 val LocalCourseOverrides = staticCompositionLocalOf<Map<String, CourseOverride>> { emptyMap() }
 
 /**
@@ -113,7 +114,7 @@ fun courseDisplayName(raw: String, overrides: Map<String, CourseOverride>): Stri
 
 @Composable
 fun BrandMark(size: Dp = 28.dp, modifier: Modifier = Modifier) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val shape = RoundedCornerShape(size * 0.28f)
     Box(
         modifier = modifier
@@ -141,7 +142,7 @@ fun SuiSurfaceCard(
     padding: PaddingValues = PaddingValues(16.dp),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.large,
@@ -159,7 +160,7 @@ fun SuiSurfaceCard(
 
 @Composable
 fun SectionTitle(title: String, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -184,9 +185,59 @@ fun SectionTitle(title: String, actionLabel: String? = null, onAction: (() -> Un
     }
 }
 
+fun statusLabel(state: State): String = when (state) {
+    State.IDLE -> "没有签到"
+    State.NOT_STARTED -> "签到未开始"
+    State.WAITING_THRESHOLD -> "等待人数达标"
+    State.READY -> "可以签到"
+    State.EXPIRED -> "签到已结束"
+    State.BLOCKED_NOT_IN_ROSTER -> "不在本次名单"
+    State.BLOCKED_AMBIGUOUS_NAME -> "名单有同名"
+    State.BLOCKED -> "暂不可用"
+    State.CONFIRMED -> "已确认签到"
+}
+
+@Composable
+fun statusAccent(state: State): Color {
+    val colors = LocalSuiSignColors.current
+    return when (state) {
+        State.READY, State.CONFIRMED -> colors.signal
+        State.WAITING_THRESHOLD, State.BLOCKED, State.BLOCKED_NOT_IN_ROSTER,
+        State.BLOCKED_AMBIGUOUS_NAME -> colors.warning
+        State.IDLE, State.NOT_STARTED, State.EXPIRED -> colors.textSecondary
+    }
+}
+
+@Composable
+fun StatusPill(state: State, modifier: Modifier = Modifier) {
+    val colors = LocalSuiSignColors.current
+    val accent = statusAccent(state)
+    Row(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(accent.copy(alpha = 0.12f))
+            .border(1.dp, accent.copy(alpha = 0.3f), CircleShape)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        if (NoticeFaces.prefs.collectAsState().value.inApp) {
+            RinFace(NoticeFaces.face(NoticeSlot.forState(state)), size = 16.dp, ring = accent)
+        } else {
+            Box(Modifier.size(5.dp).clip(CircleShape).background(accent))
+        }
+        Text(
+            text = statusLabel(state),
+            color = colors.text,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
 @Composable
 fun LiveDot(running: Boolean, modifier: Modifier = Modifier) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val accent = if (running) colors.signal else colors.textSecondary
     Row(
         modifier = modifier,
@@ -195,7 +246,7 @@ fun LiveDot(running: Boolean, modifier: Modifier = Modifier) {
     ) {
         Box(Modifier.size(5.dp).clip(CircleShape).background(accent))
         Text(
-            text = if (running) "运行中" else "未开启",
+            text = if (running) "监控中" else "未开启",
             color = accent,
             style = MaterialTheme.typography.labelMedium
         )
@@ -204,7 +255,7 @@ fun LiveDot(running: Boolean, modifier: Modifier = Modifier) {
 
 @Composable
 fun Avatar(text: String, size: Dp = 32.dp) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val profile by top.sykesp42.rin.ui.profile.Profile.state.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val bitmap = remember(profile.avatarFile) {
@@ -236,7 +287,7 @@ fun Avatar(text: String, size: Dp = 32.dp) {
             )
         } else {
             Text(
-                text = text.trim().take(1).ifBlank { "R" },
+                text = text.trim().take(1).ifBlank { "随" },
                 color = colors.actionText,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
@@ -247,7 +298,7 @@ fun Avatar(text: String, size: Dp = 32.dp) {
 
 @Composable
 fun ThemeIconButton(mode: ThemeMode, onToggle: () -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val icon = if (mode.spec.dark) {
         R.drawable.ic_theme_dark
     } else {
@@ -277,7 +328,7 @@ fun PageHeader(
     compact: Boolean = false,
     trailing: (@Composable () -> Unit)? = null
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top
@@ -322,7 +373,7 @@ fun PageHeader(
 
 @Composable
 fun InlineError(message: String, onRetry: (() -> Unit)? = null) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Surface(
         color = colors.warning.copy(alpha = 0.1f),
         shape = MaterialTheme.shapes.medium,
@@ -363,7 +414,7 @@ fun EmptyState(
     onAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -393,7 +444,7 @@ fun EmptyState(
  */
 @Composable
 private fun RinSketch(modifier: Modifier = Modifier) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Canvas(modifier = modifier.size(96.dp, 72.dp)) {
         val ink = colors.textSecondary
         val signal = colors.signal
@@ -468,8 +519,70 @@ private fun RinSketch(modifier: Modifier = Modifier) {
 }
 
 @Composable
+fun ThresholdBar(
+    signed: Int,
+    roster: Int,
+    threshold: Int,
+    modifier: Modifier = Modifier
+) {
+    val colors = LocalSuiSignColors.current
+    val reached = threshold > 0 && signed >= threshold
+    val accent = if (signed == 0) colors.textSecondary else if (reached) colors.signal else colors.warning
+    val animations = LocalAnimationsEnabled.current
+    val rosterFraction = if (roster > 0) (signed.toFloat() / roster).coerceIn(0f, 1f) else 0f
+    val thresholdFraction = if (roster > 0) (threshold.toFloat() / roster).coerceIn(0f, 1f) else 0f
+    val rosterAnimated by animateFloatAsState(
+        targetValue = rosterFraction,
+        animationSpec = if (animations) tween(420, easing = FastOutSlowInEasing) else tween(0),
+        label = "threshold_roster"
+    )
+    val thresholdAnimated by animateFloatAsState(
+        targetValue = thresholdFraction,
+        animationSpec = if (animations) tween(420, easing = FastOutSlowInEasing) else tween(0),
+        label = "threshold_marker"
+    )
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(9.dp)
+            .semantics {
+                contentDescription = "已签到 $signed 人，阈值 $threshold 人，名单 $roster 人"
+            }
+    ) {
+        val markerX = maxWidth * thresholdAnimated
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .align(Alignment.Center)
+                .clip(CircleShape)
+                .background(colors.text.copy(alpha = 0.08f))
+        )
+        if (rosterAnimated > 0f) {
+            Box(
+                Modifier
+                    .fillMaxWidth(rosterAnimated)
+                    .height(6.dp)
+                    .align(Alignment.CenterStart)
+                    .clip(CircleShape)
+                    .background(accent)
+            )
+        }
+        if (threshold > 0 && thresholdAnimated > 0.02f && thresholdAnimated < 0.98f) {
+            Box(
+                Modifier
+                    .offset(x = markerX - 0.75.dp)
+                    .width(1.5.dp)
+                    .fillMaxHeight()
+                    .background(colors.text.copy(alpha = 0.55f))
+            )
+        }
+    }
+}
+
+@Composable
 fun Radar(running: Boolean, modifier: Modifier = Modifier.size(40.dp)) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val accent = if (running) colors.signal else colors.textSecondary
     val animations = LocalAnimationsEnabled.current
     val pulse = if (animations) {
@@ -508,7 +621,7 @@ fun SuiPrimaryButton(
     enabled: Boolean = true,
     loading: Boolean = false
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val style = LocalVisualStyle.current.surface
     val animations = LocalAnimationsEnabled.current
     val interaction = remember { MutableInteractionSource() }
@@ -563,7 +676,7 @@ fun SuiSecondaryButton(
     enabled: Boolean = true,
     icon: (@Composable () -> Unit)? = null
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val style = LocalVisualStyle.current.surface
     val border = when (style) {
         top.sykesp42.rin.ui.theme.SurfaceStyle.STICKER,
@@ -589,7 +702,7 @@ fun SuiSecondaryButton(
 
 @Composable
 fun RefreshButton(onClick: () -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     IconButton(onClick = onClick, modifier = Modifier.size(44.dp)) {
         Icon(
             imageVector = Icons.Filled.Refresh,
@@ -671,7 +784,7 @@ fun SettingRow(
     modifier: Modifier = Modifier,
     trailing: @Composable () -> Unit = {}
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -700,7 +813,7 @@ fun PermissionRow(
     actionLabel: String,
     onAction: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -746,7 +859,7 @@ fun BlueprintGrid(modifier: Modifier = Modifier, color: Color) {
 /** Icon-blue wash, warm corner light and a quiet grid for every screen. */
 @Composable
 fun RinBackdrop(modifier: Modifier = Modifier) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val style = LocalVisualStyle.current
     Canvas(modifier = modifier) {
         drawRect(
@@ -801,7 +914,7 @@ fun RinBackdrop(modifier: Modifier = Modifier) {
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
-    colors: top.sykesp42.rin.ui.theme.RinColors,
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors,
     stepDp: Dp,
     alpha: Float
 ) {
@@ -820,7 +933,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDiary(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val lineX = 18.dp.toPx()
     drawLine(
@@ -837,7 +950,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDiary(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawInkDiagonals(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val ink = colors.text.copy(alpha = 0.035f)
     var offset = -size.height
@@ -858,7 +971,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawInkDiagonals(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCircuit(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val circuit = colors.accent.copy(alpha = 0.10f)
     val step = 46.dp.toPx()
@@ -875,7 +988,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCircuit(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawFilm(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val strip = 9.dp.toPx()
     val hole = 3.dp.toPx()
@@ -907,7 +1020,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawFilm(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDepth(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val center = Offset(size.width * 0.68f, size.height * 0.22f)
     drawCircle(
@@ -935,7 +1048,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawDepth(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSticker(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     var y = 14.dp.toPx()
     while (y < size.height) {
@@ -968,7 +1081,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSticker(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawHud(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     drawGrid(colors, 26.dp, 0.032f)
     var y = 0f
@@ -993,7 +1106,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawHud(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPaper(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     var y = 24.dp.toPx()
     while (y < size.height) {
@@ -1009,7 +1122,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPaper(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSeal(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     var x = 26.dp.toPx()
     while (x < size.width) {
@@ -1027,7 +1140,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSeal(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLace(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     drawCircle(
         brush = Brush.radialGradient(
@@ -1055,7 +1168,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLace(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawStory(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val inset = 10.dp.toPx()
     drawRoundRect(
@@ -1072,7 +1185,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawStory(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPixel(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val cell = 6.dp.toPx()
     val step = 18.dp.toPx()
@@ -1095,7 +1208,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPixel(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSnow(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     drawCircle(
         brush = Brush.verticalGradient(
@@ -1120,7 +1233,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSnow(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCollage(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val tear = colors.text.copy(alpha = 0.035f)
     val path = Path().apply {
@@ -1149,7 +1262,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCollage(
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawClay(
-    colors: top.sykesp42.rin.ui.theme.RinColors
+    colors: top.sykesp42.rin.ui.theme.SuiSignColors
 ) {
     val blobs = listOf(
         Triple(0.14f, 0.12f, 0.34f),
@@ -1177,7 +1290,7 @@ fun SuiSwitch(
     modifier: Modifier = Modifier,
     contentDescription: String? = null
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Switch(
         checked = checked,
         onCheckedChange = onCheckedChange,
@@ -1206,7 +1319,7 @@ fun SuiAlertDialog(
     confirmButton: @Composable () -> Unit,
     dismissButton: (@Composable () -> Unit)? = null
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     AlertDialog(
         onDismissRequest = onDismissRequest,
         title = title,
@@ -1223,115 +1336,14 @@ fun SuiAlertDialog(
 
 @Composable
 fun suiTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = LocalRinColors.current.signal,
-    unfocusedBorderColor = LocalRinColors.current.border,
-    errorBorderColor = LocalRinColors.current.warning,
-    cursorColor = LocalRinColors.current.signal,
-    focusedLabelColor = LocalRinColors.current.signal,
-    unfocusedLabelColor = LocalRinColors.current.textSecondary,
-    focusedLeadingIconColor = LocalRinColors.current.signal,
-    unfocusedLeadingIconColor = LocalRinColors.current.textSecondary,
-    focusedTrailingIconColor = LocalRinColors.current.signal,
-    unfocusedTrailingIconColor = LocalRinColors.current.textSecondary
+    focusedBorderColor = LocalSuiSignColors.current.signal,
+    unfocusedBorderColor = LocalSuiSignColors.current.border,
+    errorBorderColor = LocalSuiSignColors.current.warning,
+    cursorColor = LocalSuiSignColors.current.signal,
+    focusedLabelColor = LocalSuiSignColors.current.signal,
+    unfocusedLabelColor = LocalSuiSignColors.current.textSecondary,
+    focusedLeadingIconColor = LocalSuiSignColors.current.signal,
+    unfocusedLeadingIconColor = LocalSuiSignColors.current.textSecondary,
+    focusedTrailingIconColor = LocalSuiSignColors.current.signal,
+    unfocusedTrailingIconColor = LocalSuiSignColors.current.textSecondary
 )
-
-/**
- * The one error row a paper page uses: hairline top, warning tint, message and
- * a single retry action. Ported as-is from the full client so both builds fail
- * the same way.
- */
-@Composable
-fun ScheduleErrorRow(message: String, onRetry: () -> Unit, actionLabel: String = "重试") {
-    val colors = LocalRinColors.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(colors.warning.copy(alpha = 0.06f))
-    ) {
-        Hairline()
-        Row(
-            modifier = Modifier.padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Warning,
-                contentDescription = null,
-                tint = colors.warning,
-                modifier = Modifier.size(16.dp)
-            )
-            Text(
-                text = message,
-                color = colors.text,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(
-                onClick = onRetry,
-                modifier = Modifier.heightIn(min = 48.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-            ) {
-                Text(
-                    text = actionLabel,
-                    color = colors.text,
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-        }
-        Hairline()
-    }
-}
-
-/**
- * Equal-width segmented selector with the sky underline. Ported from the full
- * client: the campus / weekday / block filters all use it, so the 校务 page
- * reads the same in both builds.
- */
-@Composable
-fun PaperSelectorRow(
-    options: List<Pair<String, String>>,
-    selectedValue: String,
-    onSelect: (String) -> Unit
-) {
-    val colors = LocalRinColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        options.forEach { (label, value) ->
-            val selected = value == selectedValue
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .selectable(
-                        selected = selected,
-                        onClick = { onSelect(value) },
-                        role = Role.Tab
-                    )
-                    .padding(top = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = label,
-                    color = if (selected) colors.text else colors.textSecondary,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    maxLines = 1
-                )
-                Spacer(Modifier.height(6.dp))
-                Box(
-                    Modifier
-                        .width(14.dp)
-                        .height(2.dp)
-                        .background(
-                            if (selected) colors.signal else Color.Transparent,
-                            RoundedCornerShape(1.dp)
-                        )
-                )
-            }
-        }
-    }
-}

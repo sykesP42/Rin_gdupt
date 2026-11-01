@@ -49,8 +49,9 @@ data class ManualMove(
 )
 
 /**
- * A day the user marked themselves. Term dates can change for make-up days and
- * moved holidays, so the app never guesses and stores the reader's own call.
+ * A day the user marked themselves. The school calendar cannot be trusted for
+ * make-up days and moved holidays, so the app never guesses and stores the
+ * reader's own call instead.
  */
 @Serializable
 data class ManualDayMark(val date: String, val kind: String) {
@@ -86,8 +87,8 @@ data class ManualPayload(
 }
 
 /**
- * Everything the user typed in themselves. Kept in one place so a reset can
- * clear it without touching the rest of the app.
+ * Everything the user typed in themselves. Kept apart from the crawled schedule
+ * so a refresh can never erase it, and so one button can drop all of it.
  */
 class ManualScheduleStore(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
@@ -134,7 +135,7 @@ class ManualScheduleStore(private val context: Context) {
         save(_payload.value.copy(dayMarks = next.sortedBy { it.date }))
     }
 
-    /** 重置：drop every manual entry. */
+    /** 重置：drop every manual entry, leaving only what was crawled. */
     fun resetAll() = save(ManualPayload())
 }
 
@@ -146,3 +147,40 @@ fun findCourseConflict(courses: List<ManualCourse>, candidate: ManualCourse): Ma
             it.weekday == candidate.weekday &&
             it.sectionText.trim() == candidate.sectionText.trim()
     }
+
+/**
+ * Overlays manual courses and one-off moves on the crawled week.
+ *
+ * Manual rows win on a name clash, and a move removes the course from its old
+ * slot for that week only — so refreshing the crawled data can never undo either.
+ */
+fun withManualEntries(overview: ApiScheduleOverview, payload: ManualPayload): ApiScheduleOverview {
+    if (payload.isEmpty) return overview
+    val week = overview.week
+    val movedAway = payload.moves.filter { it.week == week }.map { it.courseName.trim() }.toSet()
+    val days = (1..7).map { weekday ->
+        val source = overview.days.firstOrNull { it.weekday == weekday }
+        val crawled = source?.events.orEmpty().filterNot { it.courseName.trim() in movedAway }
+        val manualHere = payload.courses
+            .filter { it.weekday == weekday && week in it.firstWeek..it.lastWeek }
+            .map {
+                ApiScheduleEvent(
+                    courseName = it.name,
+                    location = it.location,
+                    sectionText = it.sectionText
+                )
+            }
+        val movedHere = payload.moves
+            .filter { it.week == week && it.weekday == weekday }
+            .map { ApiScheduleEvent(courseName = it.courseName, sectionText = it.sectionText) }
+        val manualNames = (manualHere + movedHere).map { it.courseName.trim() }.toSet()
+        val events = crawled.filterNot { it.courseName.trim() in manualNames } + manualHere + movedHere
+        (source ?: ApiScheduleDay(weekday = weekday)).copy(events = events)
+    }
+    val todayWeekday = days.firstOrNull { it.date == overview.date }?.weekday
+    return overview.copy(
+        days = days,
+        today = todayWeekday?.let { weekday -> days.first { it.weekday == weekday }.events }
+            ?: overview.today
+    )
+}

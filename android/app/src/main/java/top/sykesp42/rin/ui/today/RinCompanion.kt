@@ -27,10 +27,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import top.sykesp42.rin.data.PetWeather
-import top.sykesp42.rin.ui.faces.NoticeFaces
-import top.sykesp42.rin.ui.faces.NoticeIcons
-import top.sykesp42.rin.ui.faces.NoticeSlot
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.monitor.NoticeFaces
+import top.sykesp42.rin.monitor.NoticeIcons
+import top.sykesp42.rin.monitor.NoticeSlot
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 data class RinCompanionProfile(
     val todayCourses: Int = 0,
@@ -49,6 +49,7 @@ data class RinCompanionProfile(
     val termWeeks: Int = 0,
     val examName: String = "",
     val examDays: Int = -1,
+    val newsTitle: String = "",
     val todoCount: Int = 0,
     val busiestWeekday: String = "",
     val freeDays: Int = 0,
@@ -59,7 +60,9 @@ data class RinCompanionProfile(
 
 enum class CompanionAction(val label: String) {
     NONE(""),
-    SCHEDULE("看看课表")
+    SCHEDULE("看看课表"),
+    SIGN("去签到"),
+    NEWS("看校园要闻")
 }
 
 data class CompanionLine(
@@ -74,10 +77,10 @@ private data class CompanionSet(
     val lines: List<String>
 )
 
-/** 100+ handwritten daily lines, grouped so the card reacts to real schedule data. */
+/** 100+ handwritten daily lines, grouped so the card reacts to real school data. */
 private object Presets {
     val morning = CompanionSet(
-        NoticeSlot.REMINDER, CompanionAction.NONE,
+        NoticeSlot.CONFIRMED, CompanionAction.NONE,
         listOf(
             "早，第{week}周，今天有{courseCount}节课。",
             "窗外{weatherText}，今天{temp}。出门前看一眼有没有带伞。",
@@ -93,7 +96,7 @@ private object Presets {
     )
 
     val noon = CompanionSet(
-        NoticeSlot.EVENING, CompanionAction.NONE,
+        NoticeSlot.SESSION, CompanionAction.NONE,
         listOf(
             "到饭点了。第{week}周，先去吃饭，回来再看消息。",
             "下午的课在等着，午休二十分钟也很有用。",
@@ -109,7 +112,7 @@ private object Presets {
     )
 
     val evening = CompanionSet(
-        NoticeSlot.EVENING, CompanionAction.NONE,
+        NoticeSlot.SESSION, CompanionAction.NONE,
         listOf(
             "今天的课结束了。第{week}周，剩下的时间归你。",
             "晚上适合整理一下今天的内容，哪怕只写三行。",
@@ -125,7 +128,7 @@ private object Presets {
     )
 
     val beforeClass = CompanionSet(
-        NoticeSlot.REMINDER, CompanionAction.SCHEDULE,
+        NoticeSlot.READY, CompanionAction.SCHEDULE,
         listOf(
             "{nextCourse}在{nextStart}开始，教室{nextRoom}。",
             "下一节是{nextCourse}，{nextStart}。现在出发刚好。",
@@ -143,7 +146,7 @@ private object Presets {
     )
 
     val inClass = CompanionSet(
-        NoticeSlot.REMINDER, CompanionAction.NONE,
+        NoticeSlot.MONITOR, CompanionAction.NONE,
         listOf(
             "现在在上{currentCourse}，先专心听课。",
             "{currentCourse}进行中。课后再看手机也来得及。",
@@ -157,7 +160,7 @@ private object Presets {
     )
 
     val afterClass = CompanionSet(
-        NoticeSlot.REMINDER, CompanionAction.NONE,
+        NoticeSlot.CONFIRMED, CompanionAction.NONE,
         listOf(
             "今天的课都上完了。先回宿舍还是去食堂？",
             "课结束了，最后整理一下今天的笔记。",
@@ -173,7 +176,7 @@ private object Presets {
     )
 
     val freeDay = CompanionSet(
-        NoticeSlot.WEATHER, CompanionAction.SCHEDULE,
+        NoticeSlot.GRADES, CompanionAction.SCHEDULE,
         listOf(
             "今天没课。第{week}周，最忙的是{busiest}，其他日子按自己的节奏来。",
             "空白的一天。下一节课是{nextDayCourse}，在{nextDayStart}。",
@@ -185,13 +188,13 @@ private object Presets {
             "空闲的一天，距离{examName}还有{days}天，可以先开个头。",
             "今天没课，下次见到{nextDayCourse}是在{nextDayStart}。",
             "空出来的一天，看看想看的书吧。",
-            "今天没有课，把时间留给自己。",
+            "今天没有课，{newsTitle}，有空可以看看。",
             "一周里难得的一天，按自己的速度来。"
         )
     )
 
     val weekend = CompanionSet(
-        NoticeSlot.REMINDER, CompanionAction.NONE,
+        NoticeSlot.CONFIRMED, CompanionAction.NONE,
         listOf(
             "周末。第{week}周，今天不赶课，先好好吃个早饭。",
             "周末的校园会安静一些。",
@@ -207,7 +210,7 @@ private object Presets {
     )
 
     val exam = CompanionSet(
-        NoticeSlot.REMINDER, CompanionAction.SCHEDULE,
+        NoticeSlot.CLASS_REMINDER, CompanionAction.SCHEDULE,
         listOf(
             "{examName}还有{days}天。今天先复习一小节。",
             "距离{examName}还有{days}天，别把复习都留到最后。",
@@ -225,7 +228,7 @@ private object Presets {
     )
 
     val weather = CompanionSet(
-        NoticeSlot.TODO, CompanionAction.NONE,
+        NoticeSlot.WAITING, CompanionAction.NONE,
         listOf(
             "今天{weatherText}，{temp}。出门记得看路。",
             "{weatherText}的一天，{temp}。伞放在包里了吗？",
@@ -242,8 +245,24 @@ private object Presets {
         )
     )
 
+    val news = CompanionSet(
+        NoticeSlot.GRADES, CompanionAction.NEWS,
+        listOf(
+            "校园要闻更新了：{news}",
+            "学校刚发了新消息：{news}",
+            "有空可以看看：{news}",
+            "最新的校园通知是「{news}」。",
+            "教务和学校都可能有新动静：{news}",
+            "今天的新消息：{news}。看看和你有没有关系。",
+            "要闻栏更新了一条：{news}",
+            "如果和你的安排有关，记得点开看看：{news}",
+            "学校发布了「{news}」，课间可以扫一眼。",
+            "刚更新的校园要闻：{news}"
+        )
+    )
+
     val todos = CompanionSet(
-        NoticeSlot.TODO, CompanionAction.NONE,
+        NoticeSlot.WAITING, CompanionAction.NONE,
         listOf(
             "今天还有{todo}条速记，挑最小的先做。",
             "速记里还有{todo}条。别让它们一直躺着。",
@@ -259,7 +278,7 @@ private object Presets {
     )
 
     val busy = CompanionSet(
-        NoticeSlot.REMINDER, CompanionAction.SCHEDULE,
+        NoticeSlot.MONITOR, CompanionAction.SCHEDULE,
         listOf(
             "今天{courseCount}节课，节奏有点满。课间尽量别安排别的事。",
             "今天课多，吃饭和喝水要按时。",
@@ -276,7 +295,7 @@ private object Presets {
 
     val all: List<CompanionSet> = listOf(
         morning, noon, evening, beforeClass, inClass, afterClass, freeDay,
-        weekend, exam, weather, todos, busy
+        weekend, exam, weather, news, todos, busy
     )
 }
 
@@ -311,6 +330,7 @@ fun companionLine(profile: RinCompanionProfile, seed: Int): CompanionLine {
             candidates += Presets.weather
         }
         if (profile.todoCount > 0) candidates += Presets.todos
+        if (profile.newsTitle.isNotBlank()) candidates += Presets.news
         if (profile.todayCourses == 0) {
             candidates += if (profile.isWeekend) Presets.weekend else Presets.freeDay
         } else {
@@ -319,41 +339,30 @@ fun companionLine(profile: RinCompanionProfile, seed: Int): CompanionLine {
         }
         candidates[Math.floorMod(seed, candidates.size)]
     }
-    val valid = set.lines.filter { line -> isLineUsable(line, profile) }
-        .ifEmpty { listOf("今天也从容一点。") }
-    val index = Math.floorMod(seed, valid.size)
+    val index = Math.floorMod(seed, set.lines.size)
     val slots = slotsFor(set)
     return CompanionLine(
-        text = render(valid[index], profile),
+        text = render(set.lines[index], profile),
         slot = slots[index % slots.size],
         action = set.action
     )
 }
 
-private fun isLineUsable(line: String, p: RinCompanionProfile): Boolean {
-    if (p.todoCount <= 0 && line.contains("{todo}")) return false
-    if (p.examName.isBlank() && (line.contains("{examName}") || line.contains("{exam}"))) return false
-    if (p.weather == PetWeather.UNKNOWN && line.contains("{weatherText}")) return false
-    if (p.nextCourse.isBlank() && line.contains("{nextCourse}")) return false
-    if (p.nextDayCourse.isBlank() && line.contains("{nextDayCourse}")) return false
-    if (p.firstCourse.isBlank() && line.contains("{first}")) return false
-    return true
-}
-
 /** Different lines in one scenario get different Rin expressions. */
 private fun slotsFor(set: CompanionSet): List<NoticeSlot> = when (set) {
-    Presets.morning -> listOf(NoticeSlot.REMINDER, NoticeSlot.REMINDER, NoticeSlot.WEATHER)
-    Presets.noon -> listOf(NoticeSlot.EVENING, NoticeSlot.TODO)
-    Presets.evening -> listOf(NoticeSlot.EVENING, NoticeSlot.EVENING)
-    Presets.beforeClass -> listOf(NoticeSlot.REMINDER, NoticeSlot.REMINDER)
-    Presets.inClass -> listOf(NoticeSlot.REMINDER)
-    Presets.afterClass -> listOf(NoticeSlot.REMINDER, NoticeSlot.EVENING)
-    Presets.freeDay -> listOf(NoticeSlot.WEATHER, NoticeSlot.REMINDER)
-    Presets.weekend -> listOf(NoticeSlot.WEATHER, NoticeSlot.REMINDER)
-    Presets.exam -> listOf(NoticeSlot.REMINDER, NoticeSlot.TODO)
-    Presets.weather -> listOf(NoticeSlot.TODO, NoticeSlot.EVENING)
-    Presets.todos -> listOf(NoticeSlot.TODO, NoticeSlot.REMINDER)
-    Presets.busy -> listOf(NoticeSlot.REMINDER, NoticeSlot.REMINDER)
+    Presets.morning -> listOf(NoticeSlot.CONFIRMED, NoticeSlot.READY, NoticeSlot.GRADES)
+    Presets.noon -> listOf(NoticeSlot.SESSION, NoticeSlot.WAITING)
+    Presets.evening -> listOf(NoticeSlot.SESSION, NoticeSlot.EXPIRED)
+    Presets.beforeClass -> listOf(NoticeSlot.READY, NoticeSlot.CLASS_REMINDER)
+    Presets.inClass -> listOf(NoticeSlot.MONITOR)
+    Presets.afterClass -> listOf(NoticeSlot.CONFIRMED, NoticeSlot.EXPIRED)
+    Presets.freeDay -> listOf(NoticeSlot.GRADES, NoticeSlot.CONFIRMED)
+    Presets.weekend -> listOf(NoticeSlot.GRADES, NoticeSlot.READY)
+    Presets.exam -> listOf(NoticeSlot.CLASS_REMINDER, NoticeSlot.WAITING)
+    Presets.weather -> listOf(NoticeSlot.WAITING, NoticeSlot.SESSION)
+    Presets.news -> listOf(NoticeSlot.GRADES, NoticeSlot.READY)
+    Presets.todos -> listOf(NoticeSlot.WAITING, NoticeSlot.MONITOR)
+    Presets.busy -> listOf(NoticeSlot.MONITOR, NoticeSlot.CLASS_REMINDER)
     else -> listOf(set.slot)
 }
 
@@ -397,6 +406,8 @@ private fun render(template: String, p: RinCompanionProfile): String {
         .replace("{examName}", p.examName.ifBlank { "考试" })
         .replace("{exam}", p.examName.ifBlank { "考试" })
         .replace("{days}", p.examDays.toString())
+        .replace("{news}", p.newsTitle.ifBlank { "新消息" })
+        .replace("{newsTitle}", p.newsTitle.ifBlank { "校园要闻" })
         .replace("{freeDays}", p.freeDays.toString())
         .replace("{todo}", p.todoCount.toString())
         .replace("{week}", p.week.toString())
@@ -412,7 +423,7 @@ fun RinCompanionCard(
     line: CompanionLine,
     onAction: (CompanionAction) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val context = LocalContext.current
     val face = remember(line.slot) {
         NoticeIcons.largeIcon(context, NoticeFaces.face(line.slot))

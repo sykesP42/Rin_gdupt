@@ -7,45 +7,55 @@ import top.sykesp42.rin.data.ApiScheduleEvent
 import top.sykesp42.rin.data.ApiScheduleOverview
 
 /**
- * Day headers count course entries, not class periods: one course can span two or
- * more sections, so "5 节课" would overstate or understate the day.
+ * Week to load when the user pulls to refresh from the schedule screen.
+ * Keeps the viewed week only when it differs from a known current week;
+ * 0 lets the backend decide the current week (also used before a current
+ * week has been detected).
  */
+fun refreshWeekTarget(viewedWeek: Int, currentWeek: Int): Int =
+    viewedWeek.takeIf { it > 0 && currentWeek > 0 && it != currentWeek } ?: 0
+
 /** "回到本周" is only useful when the current week is known and another week is shown. */
 fun shouldShowReturnToCurrent(viewedWeek: Int, currentWeek: Int): Boolean =
     currentWeek > 0 && viewedWeek != currentWeek
 
+/**
+ * Day headers count course entries, not class periods: one course can span two or
+ * more sections, so "5 节课" would overstate or understate the day.
+ */
 fun courseCountLabel(count: Int): String =
     if (count > 0) "$count 门课" else "没有课"
 
-/** The overview date anchors "today" on the campus clock. */
+/** The server-provided schedule date is the school-time anchor for "today". */
 fun todayAnchor(overviewDate: String): LocalDate? =
     overviewDate.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 
-/** Class times and the section timetable use the campus local time. */
-val campusZone: ZoneId = ZoneId.of("Asia/Shanghai")
+/** Class times, the section timetable and the sign windows are all school local time. */
+val schoolZone: ZoneId = ZoneId.of("Asia/Shanghai")
 
 /**
- * Minutes since midnight on the campus clock, so the grid's "now" row is anchored to the
+ * Minutes since midnight on the school clock, so the grid's "now" row is anchored to the
  * same zone as [todayAnchor] instead of the device timezone.
  */
-fun nowMinutesAt(instant: Instant = Instant.now(), zone: ZoneId = campusZone): Int =
+fun nowMinutesAt(instant: Instant = Instant.now(), zone: ZoneId = schoolZone): Int =
     instant.atZone(zone).let { it.hour * 60 + it.minute }
 
-/** Today's date on the campus clock. */
-fun todayAtCampusClock(instant: Instant = Instant.now(), zone: ZoneId = campusZone): LocalDate =
+/** Today's date on the school clock, used when the server did not send an overview date. */
+fun todayAtSchoolClock(instant: Instant = Instant.now(), zone: ZoneId = schoolZone): LocalDate =
     instant.atZone(zone).toLocalDate()
 
 /**
- * The date to mark as today inside one overview. The campus clock is the
- * authority, so a cached week never labels its own last day as "今天".
+ * The date to mark as today inside one overview. Only the school clock can answer
+ * this: `overview.date` is the snapshot timestamp, and an offline cache from last
+ * week would otherwise label its own last day as "今天" for days afterwards.
  * Weeks that do not contain the current date return null, so nothing is marked.
  */
 fun displayedToday(
     dayDates: List<String>,
-    campusToday: LocalDate = todayAtCampusClock()
+    schoolToday: LocalDate = todayAtSchoolClock()
 ): LocalDate? {
     val dates = dayDates.mapNotNull { todayAnchor(it) }
-    return campusToday.takeIf { it in dates }
+    return schoolToday.takeIf { it in dates }
 }
 
 /**
@@ -62,7 +72,21 @@ fun todayEvents(overview: ApiScheduleOverview, today: LocalDate): List<ApiSchedu
     }
 }
 
-/** A class row's live relationship to the current campus time. */
+/**
+ * Anchor a cached overview to [today] without touching the week grid: only the
+ * date and the `today` snapshot are refreshed. Rebuilding `days` here once wiped
+ * every other day and left the week table showing today's column only.
+ */
+fun withToday(overview: ApiScheduleOverview, today: LocalDate): ApiScheduleOverview {
+    if (overview.date == today.toString() || overview.days.isEmpty()) return overview
+    val date = today.toString()
+    val events = overview.days.firstOrNull { it.date == date }?.events
+        ?: overview.days.firstOrNull { it.weekday == today.dayOfWeek.value }?.events
+        ?: return overview
+    return overview.copy(date = date, today = events)
+}
+
+/** A class row's live relationship to the current school time. */
 enum class ClassSlotState { UPCOMING, CURRENT, PAST }
 
 /** "08:00" -> 480; blank/malformed -> null. */
@@ -94,7 +118,7 @@ fun nextUpcomingIndex(states: List<ClassSlotState>): Int =
     states.indexOfFirst { it == ClassSlotState.UPCOMING }
 
 /**
- * A quiet-period hint for the campus day at [nowMinutes], or null while a class
+ * A quiet-period hint for the school day at [nowMinutes], or null while a class
  * is in session (or nothing parseable is known). Clocks are `(start, end)`
  * pairs in any order; boundaries match [classSlotState]: `now == end` still
  * belongs to the class, `now > end` is already resting.

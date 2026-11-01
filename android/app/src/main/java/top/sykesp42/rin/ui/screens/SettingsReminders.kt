@@ -40,7 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import top.sykesp42.rin.data.AppSettings
 import top.sykesp42.rin.ui.components.Hairline
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 /** App-level reminder defaults followed by the system gates they depend on. */
 @Composable
@@ -83,7 +83,7 @@ private fun AppReminderSettings(
     onVibrationMode: (String) -> Unit,
     onHeadsUp: (Boolean) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(Modifier.fillMaxWidth()) {
         Text(
             text = "应用级提醒",
@@ -162,7 +162,7 @@ private fun AppReminderSettings(
 
 @Composable
 private fun SystemReminderSettings() {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val context = LocalContext.current
     val notificationManager = remember {
         context.getSystemService(NotificationManager::class.java)
@@ -226,7 +226,7 @@ private fun SystemReminderSettings() {
         )
         SystemSettingRow(
             title = "通知权限",
-            detail = if (notificationsGranted) "已允许 Rin 发通知" else "未允许，提醒不会出现",
+            detail = if (notificationsGranted) "已允许 Rin+ 发通知" else "未允许，提醒不会出现",
             granted = notificationsGranted,
             onClick = {
                 open(
@@ -273,7 +273,7 @@ private fun SystemReminderSettings() {
 private fun ReminderLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
-        color = LocalRinColors.current.text,
+        color = LocalSuiSignColors.current.text,
         style = MaterialTheme.typography.labelMedium,
         modifier = modifier.padding(bottom = 4.dp)
     )
@@ -285,7 +285,7 @@ private fun OptionRow(
     selected: String,
     onSelect: (String) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEach { (key, label) ->
             val active = key == selected
@@ -323,7 +323,7 @@ private fun SystemSettingRow(
     action: String = if (granted) "已授权" else "去设置",
     onClick: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()

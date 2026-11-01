@@ -47,14 +47,14 @@ import top.sykesp42.rin.data.ApiScheduleOverview
 import top.sykesp42.rin.ui.schedule.displayedToday
 import top.sykesp42.rin.ui.schedule.nowMinutesAt
 import top.sykesp42.rin.ui.schedule.todayAnchor
-import top.sykesp42.rin.ui.schedule.todayAtCampusClock
+import top.sykesp42.rin.ui.schedule.todayAtSchoolClock
 import top.sykesp42.rin.ui.theme.LocalAnimationsEnabled
 import top.sykesp42.rin.ui.schedule.ShareFormat
 import top.sykesp42.rin.ui.schedule.ShareStyle
 import top.sykesp42.rin.ui.schedule.ExportPalette
 import top.sykesp42.rin.ui.schedule.WeekExport
 import top.sykesp42.rin.ui.theme.LocalVisualStyle
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,9 +88,6 @@ fun ScheduleWeekView(
     onFullscreen: (() -> Unit)? = null,
     tableMode: Boolean = false,
     onToggleTableMode: (() -> Unit)? = null,
-    // When set, tapping 表 opens the whole-page table layer instead of the
-    // inline one; the inline strip is too short for a readable grid.
-    onOpenTable: (() -> Unit)? = null,
     currentWeek: Int = 0,
     onBackToCurrentWeek: (() -> Unit)? = null,
     shareOwner: String = "",
@@ -100,7 +97,7 @@ fun ScheduleWeekView(
     shareFormat: ShareFormat = ShareFormat.COLUMNS,
     onShareFormatChange: (ShareFormat) -> Unit = {}
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val animations = LocalAnimationsEnabled.current
     val shareContext = LocalContext.current
     val exportPalette = ExportPalette(
@@ -117,7 +114,7 @@ fun ScheduleWeekView(
     val pageInset = if (LocalConfiguration.current.screenWidthDp < 360) 20.dp else 24.dp
     val days = remember(overview) { gridDays(overview) }
     // Live "now" minute on a 30s tick, so the grid's current-class highlight
-    // moves with the campus clock instead of freezing at composition time.
+    // moves with the school clock instead of freezing at composition time.
     var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -195,8 +192,7 @@ fun ScheduleWeekView(
                         if (tableMode) onToggleTableMode()
                     }
                     ModeTab("表", selected = tableMode) {
-                        val opener = onOpenTable
-                        if (opener != null) opener() else if (!tableMode) onToggleTableMode?.invoke()
+                        if (!tableMode) onToggleTableMode()
                     }
                 }
                 Spacer(Modifier.weight(1f))
@@ -331,14 +327,14 @@ fun ScheduleWeekView(
 }
 
 /**
- * The canvas always needs seven dated columns. The week overview normally provides
+ * The canvas always needs seven dated columns. Server data normally provides
  * them; when only today's events exist, derive the Monday-Sunday dates around
  * the overview date and keep the known events under today (same rule as the
  * day view strip).
  */
 private fun gridDays(overview: ApiScheduleOverview): List<ApiScheduleDay> {
     val provided = overview.days.associateBy { it.weekday }
-    val reference = todayAnchor(overview.date) ?: todayAtCampusClock()
+    val reference = todayAnchor(overview.date) ?: todayAtSchoolClock()
     val monday = reference.with(DayOfWeek.MONDAY)
     return (1..7).map { weekday ->
         provided[weekday] ?: ApiScheduleDay(
@@ -352,7 +348,7 @@ private fun gridDays(overview: ApiScheduleOverview): List<ApiScheduleDay> {
 
 @Composable
 internal fun ModeTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Box(
         modifier = Modifier
             .heightIn(min = 48.dp)
@@ -376,7 +372,7 @@ internal fun ModeTab(label: String, selected: Boolean, onClick: () -> Unit) {
  */
 @Composable
 private fun HeaderAction(text: String, onClick: () -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Box(
         modifier = Modifier
             .heightIn(min = 48.dp)
@@ -398,7 +394,7 @@ private fun HeaderAction(text: String, onClick: () -> Unit) {
  */
 @Composable
 private fun OffWeekChip(delta: Int, onBack: (() -> Unit)?) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val label = when (delta) {
         -1 -> "上周"
         1 -> "下周"
@@ -432,7 +428,7 @@ private fun OffWeekChip(delta: Int, onBack: (() -> Unit)?) {
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ShareChip(onClick: () -> Unit, onLongClick: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Box(
         modifier = modifier
             .size(30.dp)
@@ -459,7 +455,7 @@ private fun ShareStyleDialog(
     onPick: (ShareStyle) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     SuiAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("分享方式") },

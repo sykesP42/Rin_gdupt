@@ -29,7 +29,7 @@ enum class DecorationStyle {
 
 data class VisualAppearance(
     val dark: Boolean,
-    val colors: RinColors,
+    val colors: SuiSignColors,
     val mode: ThemeMode,
     val spec: ThemeSpec,
     val label: String,
@@ -48,7 +48,7 @@ val LocalVisualStyle = staticCompositionLocalOf { resolveAppearance() }
 fun resolveAppearance(
     mode: ThemeMode = ThemeMode.default,
     resolvedDark: Boolean = false,
-    dynamicColors: RinColors? = null,
+    dynamicColors: SuiSignColors? = null,
     accentOverride: String? = null,
     corners: ThemeCorners = ThemeCorners.NATIVE,
     decorations: Boolean = true,
@@ -59,7 +59,7 @@ fun resolveAppearance(
     val custom = customTheme?.takeIf { it.hasCover }
 
     val spec: ThemeSpec
-    val colors: RinColors
+    val colors: SuiSignColors
     val dark: Boolean
     if (custom == null) {
         spec = baseSpec

@@ -12,7 +12,7 @@ private val Context.courseOverridesStore by preferencesDataStore(name = "course_
 data class CourseOverride(val alias: String = "", val colorIndex: Int = 0)
 
 /**
- * Per-course display overrides, keyed by the course name. The alias is
+ * Per-course display overrides, keyed by the JWXT course name. The alias is
  * what render sites show; the color variant reseeds the shared accent hash so
  * every surface (grid cells, timeline, term list) recolors together without
  * any render-site change.

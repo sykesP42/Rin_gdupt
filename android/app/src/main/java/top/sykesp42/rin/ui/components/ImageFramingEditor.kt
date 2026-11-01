@@ -41,7 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 /**
  * A direct-manipulation crop frame: drag to choose the part that survives,
@@ -60,7 +60,7 @@ fun ImageFramingEditor(
     onDismiss: () -> Unit,
     onPickAgain: (() -> Unit)? = null
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     var scale by remember(bitmap) { mutableFloatStateOf(initialScale.coerceIn(1f, 3f)) }
     var offsetX by remember(bitmap) { mutableFloatStateOf(initialOffsetX.coerceIn(-1f, 1f)) }
     var offsetY by remember(bitmap) { mutableFloatStateOf(initialOffsetY.coerceIn(-1f, 1f)) }

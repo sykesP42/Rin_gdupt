@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.YearMonth
+import top.sykesp42.rin.data.CampusNewsItem
 import top.sykesp42.rin.data.JwxtCalendarDay
 import top.sykesp42.rin.data.JwxtExam
 import top.sykesp42.rin.data.ManualDayMark
@@ -50,15 +51,14 @@ import top.sykesp42.rin.ui.CalendarUiState
 import top.sykesp42.rin.ui.components.EmptyState
 import top.sykesp42.rin.ui.components.Hairline
 import top.sykesp42.rin.ui.components.RinSheet
-import top.sykesp42.rin.ui.components.ScheduleErrorRow
 import top.sykesp42.rin.ui.components.SectionHeader
 import top.sykesp42.rin.ui.formatDateLine
 import top.sykesp42.rin.ui.schedule.DayCourse
 import top.sykesp42.rin.ui.schedule.calendarMonthRows
 import top.sykesp42.rin.ui.schedule.examCountdownLabel
 import top.sykesp42.rin.ui.schedule.parseExamTime
-import top.sykesp42.rin.ui.schedule.todayAtCampusClock
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.schedule.todayAtSchoolClock
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.courseAccent
 
 /**
@@ -74,7 +74,7 @@ internal fun CalendarHead(
     modifier: Modifier = Modifier,
     actionLabel: String = "重试"
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(modifier = modifier.fillMaxWidth()) {
         SectionHeader(
             title = "校历",
@@ -122,7 +122,7 @@ internal fun CalendarHead(
 
 @Composable
 private fun CalendarLegend() {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -139,7 +139,7 @@ private fun CalendarLegend() {
 
 @Composable
 private fun dayMarkColor(kind: String): Color {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     return when (kind) {
         ManualDayMark.OFF -> colors.warning
         ManualDayMark.MAKEUP -> colors.signal
@@ -151,7 +151,7 @@ private fun dayMarkColor(kind: String): Color {
 
 @Composable
 private fun LegendItem(color: Color, label: String, ring: Boolean = false) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier
@@ -176,7 +176,7 @@ internal fun MonthGrid(
     marks: Map<String, ManualDayMark>,
     onDayClick: (JwxtCalendarDay) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val weeks = days.mapNotNull { day ->
         Regex("\\d+").find(day.week)?.value?.toIntOrNull()
     }.distinct().sorted()
@@ -246,7 +246,7 @@ private fun CalendarDayCell(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val isToday = date == today
     val description = buildString {
         append("${date.monthValue} 月 ${date.dayOfMonth} 日")
@@ -328,14 +328,17 @@ internal fun CalendarDaySheet(
     date: LocalDate?,
     courses: List<DayCourse>,
     exams: List<JwxtExam>,
+    news: List<CampusNewsItem>,
     today: LocalDate,
     mark: ManualDayMark?,
     onMark: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onOpenNews: (String) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val dark = colors.canvas.luminance() < 0.4f
     val isToday = date == today
+    var newsExpanded by remember(day.date) { mutableStateOf(false) }
 
     RinSheet(onDismiss = onDismiss) {
         Row(
@@ -422,6 +425,27 @@ internal fun CalendarDaySheet(
             }
         }
 
+        DaySectionLabel("校园要闻", "当天发布 ${news.size}")
+        if (news.isEmpty()) {
+            Text(
+                text = "当天没有发布校园要闻",
+                color = colors.textSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+        } else {
+            val shown = if (newsExpanded) news else news.take(1)
+            shown.forEach { item -> DayNewsRow(item = item, onOpen = { onOpenNews(item.url) }) }
+            if (news.size > 1 && !newsExpanded) {
+                TextButton(
+                    onClick = { newsExpanded = true },
+                    modifier = Modifier.heightIn(min = 44.dp),
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                ) {
+                    Text("展开 ${news.size - 1} 条 ›", color = colors.accent, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
         Spacer(Modifier.height(8.dp))
     }
 }
@@ -433,7 +457,7 @@ private fun MarkChip(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Box(
         Modifier
             .heightIn(min = 40.dp)
@@ -471,7 +495,7 @@ private fun DayChip(text: String, color: Color, filled: Boolean) {
 
 @Composable
 private fun DaySectionLabel(title: String, count: String) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -489,7 +513,7 @@ private fun DaySectionLabel(title: String, count: String) {
 
 @Composable
 private fun DayExamCard(exam: JwxtExam, today: LocalDate, dark: Boolean) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val parsed = parseExamTime(exam.time)
     val clock = when {
         parsed.start.isNotBlank() && parsed.end.isNotBlank() -> "${parsed.start}-${parsed.end}"
@@ -551,7 +575,7 @@ private fun DayExamCard(exam: JwxtExam, today: LocalDate, dark: Boolean) {
 
 @Composable
 private fun DayCourseRow(course: DayCourse, dark: Boolean) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val ink = courseAccent(course.courseName, dark)
     Row(
         Modifier
@@ -595,13 +619,51 @@ private fun DayCourseRow(course: DayCourse, dark: Boolean) {
     Hairline()
 }
 
+@Composable
+private fun DayNewsRow(item: CampusNewsItem, onOpen: () -> Unit) {
+    val colors = LocalSuiSignColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClick = onOpen)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            Modifier
+                .border(1.dp, colors.border, RoundedCornerShape(5.dp))
+                .padding(horizontal = 5.dp, vertical = 1.dp)
+        ) {
+            Text("闻", color = colors.textSecondary, style = MaterialTheme.typography.labelSmall)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                color = colors.text,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "校园要闻 · 发布于 ${item.date}",
+                color = colors.textSecondary,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+    }
+}
+
 /**
  * 学期进度：只按校历的起止日期计算，不推断哪一天上课、哪一天放假。
  */
 @Composable
 private fun TermProgress(days: List<JwxtCalendarDay>) {
-    val colors = LocalRinColors.current
-    val today = todayAtCampusClock()
+    val colors = LocalSuiSignColors.current
+    val today = todayAtSchoolClock()
     val dates = days
         .mapNotNull { runCatching { java.time.LocalDate.parse(it.date) }.getOrNull() }
         .sorted()

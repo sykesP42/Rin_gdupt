@@ -352,41 +352,25 @@ class LocalJwxtApi(
      */
     suspend fun fetchFreeClassrooms(weekday: Int, week: Int, sections: String): List<JwxtFreeRoom> =
         withContext(Dispatchers.IO) {
-            freeRoomsIn(fetchContext().currentTerm, weekday, week, sections)
+            val query = buildString {
+                append("?primarySort=jxcddm%20desc&page=1&rows=200")
+                append("&xnxqdm=").append(fetchContext().currentTerm)
+                append("&xq=").append(freeRoomApiWeekday(weekday))
+                append("&zc=").append(week)
+                if (sections.isNotBlank()) append("&jc=").append(urlEncodeSections(sections))
+            }
+            val body = get("$baseUrl/teajssqxx!getPlJsDataList.action$query")
+            parseClassroomPage(body).rooms.map { row ->
+                JwxtFreeRoom(
+                    roomCode = row.code,
+                    roomName = row.name,
+                    campus = row.campus,
+                    building = row.building,
+                    capacity = row.capacity,
+                    area = row.area
+                )
+            }.sortedWith(compareBy({ it.campus }, { it.building }, { it.roomName }))
         }
-
-    /**
-     * Free rooms for an already-resolved term. The room helper queries several
-     * section pairs in a row, so the term comes from the caller's single
-     * [contextSnapshot] read instead of one context round-trip per slot.
-     */
-    suspend fun freeRoomsIn(
-        term: String,
-        weekday: Int,
-        week: Int,
-        sections: String
-    ): List<JwxtFreeRoom> = withContext(Dispatchers.IO) {
-        val query = buildString {
-            append("?primarySort=jxcddm%20desc&page=1&rows=500")
-            append("&xnxqdm=").append(term)
-            append("&xq=").append(freeRoomApiWeekday(weekday))
-            append("&zc=").append(week)
-            if (sections.isNotBlank()) append("&jc=").append(urlEncodeSections(sections))
-        }
-        parseClassroomPage(get("$baseUrl/teajssqxx!getPlJsDataList.action$query")).rooms.map { row ->
-            JwxtFreeRoom(
-                roomCode = row.code,
-                roomName = row.name,
-                campus = row.campus,
-                building = row.building,
-                capacity = row.capacity,
-                area = row.area
-            )
-        }.sortedWith(compareBy({ it.campus }, { it.building }, { it.roomName }))
-    }
-
-    /** One timetable context read, shared by the room helper's slot queries. */
-    suspend fun contextSnapshot(): JwxtContext = withContext(Dispatchers.IO) { fetchContext() }
 
     /**
      * Classroom catalog: current-week free-room rows supply verified four-digit
@@ -412,8 +396,8 @@ class LocalJwxtApi(
             }
         }
         // The room picker page maps names that never appeared as free. Its
-        // option values are internal ids, NOT room codes, so they stay blank
-        // until a jxcdbh is seen.
+        // option values are internal ids, NOT attendance codes, so they stay
+        // blank until a jxcdbh is seen.
         val page = runCatching { get("$baseUrl/teajssqxx!teakxjspllist.action") }.getOrNull()
         if (page != null) {
             val knownBuildings = all.values.map { it.building to it.campus }.filter { it.first.isNotBlank() }
@@ -432,7 +416,7 @@ class LocalJwxtApi(
         }
         // Room scan: the grid without the "free only" filter lists every room
         // with its jxcdbh, including rooms that are busy all week (exactly the
-        // ones the grid needs). The grid also accepts the whole term's weeks.
+        // ones sign-in needs). The grid also accepts the whole term's weeks.
         runCatching {
             val scanWeeks = catalogWeekRange(context.maxWeek)
             var scanPage = 1
@@ -769,7 +753,7 @@ class LocalJwxtApi(
         return null
     }
 
-    /** Student card (server-rendered page); only the display name is kept. */
+    /** Student card (server-rendered page); name feeds roster matching. */
     suspend fun fetchStudentInfo(): JwxtStudentInfo? = withContext(Dispatchers.IO) {
         val body = get("$baseUrl/xjkpxx!xjkpList.action")
         val text = Jsoup.parse(body).wholeText()
@@ -1168,8 +1152,9 @@ internal fun catalogWeekRange(maxWeek: Int): String =
     (1..maxWeek.coerceAtLeast(1)).joinToString(",")
 
 /**
- * JWXT often stores a classroom number without leading zeros (611, 424);
- * pad those to four digits for a stable lookup key.
+ * The sign/lookup API accepts exactly four digits. JWXT often stores the
+ * classroom number without leading zeros (611, 424); pad those so a catalog
+ * hit can actually be used as a monitoring target.
  */
 internal fun normalizeRoomCode(raw: String): String {
     val digits = raw.filter { it.isDigit() }

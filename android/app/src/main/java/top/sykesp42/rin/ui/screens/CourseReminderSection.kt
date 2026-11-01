@@ -37,11 +37,12 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import top.sykesp42.rin.data.CourseReminder
+import top.sykesp42.rin.data.JwxtTermSlot
 import top.sykesp42.rin.data.ReminderPrefs
 import top.sykesp42.rin.ui.components.Hairline
 import top.sykesp42.rin.ui.components.SuiPrimaryButton
-import top.sykesp42.rin.ui.schedule.todayAtCampusClock
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.schedule.todayAtSchoolClock
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 /**
  * The important-course reminder editor. Force-unmute and its children always
@@ -54,12 +55,13 @@ internal fun CourseReminderSection(
     dateHint: String,
     startHint: String,
     endHint: String,
+    slots: List<JwxtTermSlot>,
     prefs: ReminderPrefs,
     reminders: List<CourseReminder>,
     onSave: (CourseReminder, ReminderPrefs) -> Boolean,
     onDelete: (String) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val context = LocalContext.current
     val notificationManager = remember {
         context.getSystemService(NotificationManager::class.java)
@@ -89,8 +91,8 @@ internal fun CourseReminderSection(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val occurrence = remember(courseName, dateHint, startHint, endHint) {
-        occurrenceOf(dateHint, startHint, endHint)
+    val occurrence = remember(courseName, dateHint, startHint, slots) {
+        occurrenceOf(dateHint, startHint, endHint, slots)
     }
     val trigger = runCatching {
         LocalDateTime.of(occurrence.first, LocalTime.parse(occurrence.second))
@@ -348,7 +350,7 @@ private fun ReminderToggle(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -368,12 +370,16 @@ private fun ReminderToggle(
 private fun occurrenceOf(
     dateHint: String,
     startHint: String,
-    endHint: String
+    endHint: String,
+    slots: List<JwxtTermSlot>
 ): Triple<LocalDate, String, String> {
-    val today = todayAtCampusClock()
+    val today = todayAtSchoolClock()
+    val slot = slots.firstOrNull()
     val parsedDate = runCatching { LocalDate.parse(dateHint) }.getOrNull()
-    var date = parsedDate ?: today
-    val start = startHint.takeIf { it.length == 5 } ?: "08:00"
+    var date = parsedDate ?: today.plusDays(
+        ((slot?.weekday ?: today.dayOfWeek.value) - today.dayOfWeek.value + 7) % 7L
+    )
+    val start = startHint.takeIf { it.length == 5 } ?: slotStart(slot)
     val end = endHint.takeIf { it.length == 5 } ?: plusMinutes(start, 95)
     if (parsedDate == null) {
         val at = runCatching {
@@ -384,6 +390,11 @@ private fun occurrenceOf(
     return Triple(date, start, end)
 }
 
+private fun slotStart(slot: JwxtTermSlot?): String {
+    val first = slot?.sectionText?.let { Regex("\\d+").find(it)?.value?.toIntOrNull() } ?: 1
+    val minutes = sectionBounds[first]?.first ?: 8 * 60
+    return "%02d:%02d".format(minutes / 60, minutes % 60)
+}
 
 private fun plusMinutes(start: String, minutes: Int): String {
     val time = runCatching { LocalTime.parse(start) }.getOrNull() ?: LocalTime.of(8, 0)

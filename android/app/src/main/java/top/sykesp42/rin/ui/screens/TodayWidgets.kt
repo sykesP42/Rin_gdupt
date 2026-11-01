@@ -57,29 +57,28 @@ import java.util.Locale
 import top.sykesp42.rin.data.ApiScheduleEvent
 import top.sykesp42.rin.data.ApiScheduleOverview
 import top.sykesp42.rin.data.AppSettings
-import top.sykesp42.rin.data.ManualExam
-import top.sykesp42.rin.ui.faces.NoticeFaces
-import top.sykesp42.rin.ui.faces.NoticeIcons
-import top.sykesp42.rin.ui.faces.NoticeSlot
+import top.sykesp42.rin.data.CampusNewsItem
+import top.sykesp42.rin.data.JwxtExam
+import top.sykesp42.rin.monitor.NoticeFaces
+import top.sykesp42.rin.monitor.NoticeIcons
+import top.sykesp42.rin.monitor.NoticeSlot
 import top.sykesp42.rin.ui.schedule.firstSection
 import top.sykesp42.rin.ui.schedule.parseExamTime
 import top.sykesp42.rin.ui.schedule.sectionSpan
-import top.sykesp42.rin.ui.schedule.sectionStart
-import top.sykesp42.rin.ui.schedule.sectionBounds
 import top.sykesp42.rin.ui.schedule.todayEvents
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.LocalVisualStyle
 import top.sykesp42.rin.ui.theme.courseAccent
 
 @Composable
-internal fun WidgetCard(
+private fun WidgetCard(
     title: String,
     meta: String = "",
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -119,7 +118,7 @@ internal fun MiniTimetableDayCard(
     today: LocalDate,
     onOpen: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val dark = LocalVisualStyle.current.spec.dark
     val events = overview?.let { todayEvents(it, today) }.orEmpty()
     WidgetCard("Mini 课表 · 日", "${events.size} 节", "打开", onOpen) {
@@ -172,7 +171,7 @@ internal fun MiniTimetableDayCard(
 
 @Composable
 internal fun MiniTimetableWeekCard(overview: ApiScheduleOverview?, onOpen: () -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val counts = (1..7).map { weekday ->
         overview?.days?.firstOrNull { it.weekday == weekday }?.events?.size ?: 0
     }
@@ -231,7 +230,7 @@ internal fun MiniTimetableTableCard(
     nowMinutes: Int,
     onOpen: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val dark = LocalVisualStyle.current.spec.dark
     WidgetCard("Mini 课表 · 表", "", "打开", onOpen) {
         if (overview == null) {
@@ -362,9 +361,65 @@ internal fun MiniTimetableTableCard(
 }
 
 @Composable
+internal fun QuickLinksCard(
+    settings: AppSettings,
+    newsUrl: String,
+    onSchedule: () -> Unit,
+    onSign: () -> Unit
+) {
+    val context = LocalContext.current
+    val colors = LocalSuiSignColors.current
+    WidgetCard("快捷跳转", "", null) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                QuickLink("教务系统", Modifier.weight(1f)) {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(settings.jwxtBaseUrl))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }
+                QuickLink("校园要闻", Modifier.weight(1f)) {
+                    if (newsUrl.isNotBlank()) {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, android.net.Uri.parse(newsUrl))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                QuickLink("打开课表", Modifier.weight(1f), onSchedule)
+                QuickLink("去签到", Modifier.weight(1f), onSign)
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickLink(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = LocalSuiSignColors.current
+    Box(
+        modifier = modifier
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.canvas.copy(alpha = 0.65f))
+            .border(1.dp, colors.border.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = colors.text, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
 internal fun FileHubCard(onMessage: (String) -> Unit) {
     val context = LocalContext.current
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     var nonce by remember { mutableIntStateOf(0) }
     val stats = remember(nonce) {
         val dir = File(context.cacheDir, "share")
@@ -416,10 +471,10 @@ private fun formatBytes(bytes: Long): String = when {
 
 @Composable
 internal fun RinShowcaseCard() {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val context = LocalContext.current
     val face = remember {
-        NoticeIcons.largeIcon(context, NoticeFaces.face(NoticeSlot.REMINDER))
+        NoticeIcons.largeIcon(context, NoticeFaces.face(NoticeSlot.CONFIRMED))
     }
     WidgetCard("Rin 展示架", "", null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -453,7 +508,7 @@ internal fun PhotoFrameCard(
     onPick: () -> Unit,
     onClear: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     WidgetCard("相框", "", null) {
         Box(
             modifier = Modifier
@@ -497,8 +552,8 @@ internal fun PhotoFrameCard(
 }
 
 @Composable
-internal fun ExamCountdownCard(exams: List<ManualExam>, today: LocalDate) {
-    val colors = LocalRinColors.current
+internal fun ExamCountdownCard(exams: List<JwxtExam>, today: LocalDate) {
+    val colors = LocalSuiSignColors.current
     val next = exams.mapNotNull { exam ->
         val date = parseExamTime(exam.time).date ?: return@mapNotNull null
         if (date.isBefore(today)) null else Triple(exam, date, ChronoUnit.DAYS.between(today, date))
@@ -532,7 +587,7 @@ internal fun ExamCountdownCard(exams: List<ManualExam>, today: LocalDate) {
             )
         }
         Text(
-            text = exam.name,
+            text = exam.courseName,
             color = colors.text,
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
@@ -548,3 +603,86 @@ internal fun ExamCountdownCard(exams: List<ManualExam>, today: LocalDate) {
     }
 }
 
+@Composable
+internal fun CampusNewsCard(items: List<CampusNewsItem>, onOpen: (String) -> Unit) {
+    val colors = LocalSuiSignColors.current
+    var expanded by remember { mutableStateOf(false) }
+    val canExpand = items.size > 2
+    WidgetCard(
+        title = "校园要闻",
+        actionLabel = if (expanded) "收起" else if (canExpand) "展开" else null,
+        onAction = if (expanded || canExpand) {
+            { expanded = !expanded }
+        } else {
+            null
+        }
+    ) {
+        if (items.isEmpty()) {
+            Text("暂无更新", color = colors.textSecondary, style = MaterialTheme.typography.bodySmall)
+            return@WidgetCard
+        }
+        Text(
+            text = "共 ${items.size} 条" + when {
+                expanded -> " · 卡片内上下滑动"
+                canExpand -> " · 显示最新 2 条"
+                else -> ""
+            },
+            color = colors.textSecondary,
+            style = MaterialTheme.typography.labelSmall
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (expanded) {
+                        Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            val visible = if (expanded) items else items.take(2)
+            visible.forEachIndexed { index, item ->
+                if (index > 0) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(colors.border.copy(alpha = 0.35f))
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                        .clickable { onOpen(item.url) }
+                        .padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        text = item.title,
+                        color = colors.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = item.date,
+                        color = colors.textSecondary,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun sectionStart(text: String): String {
+    val raw = Regex("\\d+").find(text)?.value.orEmpty()
+    val first = when {
+        raw.length >= 4 && raw.length % 2 == 0 -> raw.take(2).toIntOrNull() ?: 1
+        else -> raw.toIntOrNull() ?: 1
+    }
+    val minutes = sectionBounds[first]?.first ?: 8 * 60
+    return "%02d:%02d".format(minutes / 60, minutes % 60)
+}

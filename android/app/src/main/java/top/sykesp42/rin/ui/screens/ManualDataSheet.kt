@@ -34,19 +34,19 @@ import top.sykesp42.rin.ui.components.RinSheet
 import top.sykesp42.rin.ui.components.SuiAlertDialog
 import top.sykesp42.rin.ui.components.SuiPrimaryButton
 import top.sykesp42.rin.ui.components.suiTextFieldColors
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 private val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
 
 /**
- * 手动数据: an extra course, an exam, a todo, or a one-off move. Manual rows
- * always win over generated ones, and the store lives outside the schedule
- * cache so rebuilding the week never erases them.
+ * 手动数据: the four things the crawler cannot know — an extra course, an exam,
+ * a todo, or a one-off move. Manual rows always win over crawled ones, and the
+ * store lives outside the schedule cache so a refresh never erases them.
  */
 @Composable
 internal fun ManualDataSheet(
     payload: ManualPayload,
-    existingNames: Set<String>,
+    crawledNames: Set<String>,
     onAddCourse: (ManualCourse) -> Unit,
     onRemoveCourse: (String) -> Unit,
     onAddExam: (ManualExam) -> Unit,
@@ -58,14 +58,14 @@ internal fun ManualDataSheet(
     onRemoveMove: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     var tab by remember { mutableIntStateOf(0) }
     var pendingConflict by remember { mutableStateOf<ManualCourse?>(null) }
 
     fun submitCourse(course: ManualCourse) {
         val clashManual = findCourseConflict(payload.courses, course) != null
-        val clashExisting = existingNames.any { it.trim() == course.name.trim() }
-        if (clashManual || clashExisting) pendingConflict = course else onAddCourse(course)
+        val clashCrawled = crawledNames.any { it.trim() == course.name.trim() }
+        if (clashManual || clashCrawled) pendingConflict = course else onAddCourse(course)
     }
 
     RinSheet(onDismiss = onDismiss) {
@@ -148,7 +148,7 @@ private fun Field(
 
 @Composable
 private fun WeekdayRow(selected: Int, onSelect: (Int) -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(vertical = 4.dp)) {
         WEEKDAY_LABELS.forEachIndexed { index, label ->
             Text(
@@ -165,7 +165,7 @@ private fun WeekdayRow(selected: Int, onSelect: (Int) -> Unit) {
 
 @Composable
 private fun DeleteRow(text: String, onDelete: () -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = text,
@@ -251,7 +251,7 @@ private fun TodoForm(
     onRemove: (String) -> Unit,
     onAdd: (ManualTodo) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     var title by remember { mutableStateOf("") }
     var due by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth()) {

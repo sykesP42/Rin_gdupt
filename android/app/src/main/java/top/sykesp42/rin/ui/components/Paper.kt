@@ -56,7 +56,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.sykesp42.rin.R
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.ThemeArtImage
 import top.sykesp42.rin.ui.theme.ThemeSpec
 
@@ -78,7 +78,7 @@ fun PaperPage(
     ambientSpec: ThemeSpec? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -112,7 +112,7 @@ private fun ThemeAmbient(
     spec: ThemeSpec,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val blur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         Modifier.blur(24.dp)
     } else {
@@ -160,7 +160,7 @@ internal fun SkyWash(
     modifier: Modifier = Modifier,
     height: Dp = 320.dp
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val boost = if (colors.canvas.luminance() < 0.4f) 1.4f else 1f
     val sky = colors.accent
     Box(
@@ -202,7 +202,7 @@ fun RinMasthead(
     compact: Boolean = false,
     onAvatarClick: (() -> Unit)? = null
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val appearance = top.sykesp42.rin.ui.theme.LocalVisualStyle.current
     val themeIcon = if (colors.canvas.luminance() < 0.4f) {
         R.drawable.ic_theme_dark
@@ -278,7 +278,7 @@ fun RinMasthead(
 /** Label + optional meta + a single hairline. No container card. */
 @Composable
 fun SectionHeader(title: String, meta: String? = null) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -311,7 +311,7 @@ fun Hairline() {
         Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(LocalRinColors.current.border)
+            .background(LocalSuiSignColors.current.border)
     )
 }
 
@@ -321,7 +321,7 @@ fun DataBand(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val dark = colors.canvas.luminance() < 0.4f
     Row(
         modifier = modifier
@@ -338,3 +338,60 @@ fun DataBand(
     )
 }
 
+/** In-flow action dock: one full-width primary action + monitor line. */
+@Composable
+fun PageActionBar(
+    primaryLabel: String,
+    onPrimary: () -> Unit,
+    monitorEnabled: Boolean,
+    onMonitorChange: (Boolean) -> Unit,
+    monitorDetail: String? = null,
+    monitorDetailRequiresEnabled: Boolean = false
+) {
+    val colors = LocalSuiSignColors.current
+    val monitorText = buildString {
+        append(if (monitorEnabled) "后台监控已开启" else "后台监控未开启")
+        // Running details are gated by the caller's enabled flag; neutral
+        // last-check copy may remain visible while monitoring is off.
+        if (
+            !monitorDetail.isNullOrBlank() &&
+            (!monitorDetailRequiresEnabled || monitorEnabled)
+        ) {
+            append(" · ").append(monitorDetail)
+        }
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SuiPrimaryButton(
+            text = primaryLabel,
+            onClick = onPrimary,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(5.dp)
+                    .background(
+                        if (monitorEnabled) colors.signal else colors.textSecondary,
+                        CircleShape
+                    )
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = monitorText,
+                color = colors.textSecondary,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                modifier = Modifier.weight(1f)
+            )
+            SuiSwitch(
+                checked = monitorEnabled,
+                onCheckedChange = onMonitorChange,
+                contentDescription = "后台监控"
+            )
+        }
+    }
+}

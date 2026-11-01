@@ -28,17 +28,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.sykesp42.rin.data.AppSettings
-import top.sykesp42.rin.ui.faces.NoticeFaces
-import top.sykesp42.rin.ui.faces.NoticeIcon
-import top.sykesp42.rin.ui.faces.NoticeOutfit
-import top.sykesp42.rin.ui.faces.NoticePlate
-import top.sykesp42.rin.ui.faces.NoticeSlot
+import top.sykesp42.rin.monitor.NoticeFaces
+import top.sykesp42.rin.monitor.NoticeIcon
+import top.sykesp42.rin.monitor.NoticeOutfit
+import top.sykesp42.rin.monitor.NoticePlate
+import top.sykesp42.rin.monitor.NoticeSlot
 import top.sykesp42.rin.ui.AppViewModel
 import top.sykesp42.rin.ui.components.Hairline
 import top.sykesp42.rin.ui.components.RinFace
 import top.sykesp42.rin.ui.components.SectionHeader
 import top.sykesp42.rin.ui.components.SuiAlertDialog
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 
 /** Home card line: the outfit plus how many slots the user has remapped. */
 internal fun noticeFacesSummary(settings: AppSettings): String {
@@ -52,7 +52,7 @@ internal fun SettingsFacesContent(
     vm: AppViewModel,
     onBack: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val prefs by NoticeFaces.prefs.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf<NoticeSlot?>(null) }
 
@@ -156,7 +156,7 @@ private fun OutfitChoiceCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(
         modifier
             .clip(MaterialTheme.shapes.medium)
@@ -191,7 +191,7 @@ private fun PlateChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Box(
         modifier
             .height(40.dp)
@@ -219,7 +219,7 @@ private fun FaceSlotRow(
     face: NoticeIcon,
     onClick: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val changed = face != slot.default
     Row(
         modifier = Modifier
@@ -252,7 +252,7 @@ private fun FacePickerDialog(
     onPick: (NoticeIcon) -> Unit,
     onReset: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val current = NoticeFaces.face(slot)
     SuiAlertDialog(
         onDismissRequest = onDismiss,

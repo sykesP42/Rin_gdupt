@@ -61,8 +61,8 @@ import top.sykesp42.rin.ui.schedule.nextUpcomingIndex
 import top.sykesp42.rin.ui.schedule.nowMinutesAt
 import top.sykesp42.rin.ui.schedule.restHint
 import top.sykesp42.rin.ui.schedule.todayAnchor
-import top.sykesp42.rin.ui.schedule.todayAtCampusClock
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.schedule.todayAtSchoolClock
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.courseAccent
 
 private val weekdayShort = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -73,7 +73,7 @@ internal fun initialDayFocus(overview: ApiScheduleOverview): Int {
     val days = weekDays(overview)
     val dates = days.map { it.date }
     val today = displayedToday(dates)
-    return today?.dayOfWeek?.value ?: todayAtCampusClock().dayOfWeek.value
+    return today?.dayOfWeek?.value ?: todayAtSchoolClock().dayOfWeek.value
 }
 
 /**
@@ -112,7 +112,7 @@ fun ScheduleDayView(
     onWeekdayPick: (Int) -> Unit,
     onCourseTap: (ApiScheduleEvent) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     // Live school-clock minute: recomposed on a 30s tick so "现在" follows the
     // real class window instead of the server snapshot taken at fetch time.
     var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -130,8 +130,8 @@ fun ScheduleDayView(
         if (d.isNotEmpty()) d
         else {
             // Stale cache without days: synthesize a single-day view from today.
-            val todayDate = todayAtCampusClock().toString()
-            val weekday = todayAtCampusClock().dayOfWeek.value
+            val todayDate = todayAtSchoolClock().toString()
+            val weekday = todayAtSchoolClock().dayOfWeek.value
             listOf(
                 top.sykesp42.rin.data.ApiScheduleDay(
                     date = todayDate, weekday = weekday, events = overview.today
@@ -141,7 +141,7 @@ fun ScheduleDayView(
     }
     val today = displayedToday(days.map { it.date })
     val todayString = today?.toString()
-        ?: todayAtCampusClock().toString()
+        ?: todayAtSchoolClock().toString()
     // Today positioning: the displayed week's today first; when the shown week
     // is stale (cached from another week), fall back to the school clock's
     // weekday instead of silently landing on Monday.
@@ -152,7 +152,7 @@ fun ScheduleDayView(
     // week — marking its same-weekday day as "today" would strike through
     // last week's Wednesday with this week's clock.
     val isToday = day.date == todayString ||
-        (today == null && days.size == 1 && day.weekday == todayAtCampusClock().dayOfWeek.value)
+        (today == null && days.size == 1 && day.weekday == todayAtSchoolClock().dayOfWeek.value)
     // Live slot states only for today; other days stay neutral (no "现在",
     // no strike-through) because comparing their clock to today's minute is
     // meaningless.
@@ -196,7 +196,7 @@ fun ScheduleDayView(
                     color = colors.text
                 )
                 Text(
-                    text = "可以切到周表添加课程，",
+                    text = "可手动输入教室码",
                     color = colors.textSecondary,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 3.dp)
@@ -217,6 +217,30 @@ fun ScheduleDayView(
     }
 }
 
+/** A quiet rest line between classes on the school day timeline. */
+@Composable
+internal fun RestBanner(text: String) {
+    val colors = LocalSuiSignColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally)
+    ) {
+        Box(
+            Modifier
+                .size(4.dp)
+                .background(colors.textSecondary.copy(alpha = 0.5f), CircleShape)
+        )
+        Text(
+            text = text,
+            color = colors.textSecondary,
+            style = MaterialTheme.typography.labelMedium
+        )
+    }
+}
+
 /** Seven cells: today gets a sky dot, the selected day a 2dp sky underline. */
 @Composable
 private fun WeekStrip(
@@ -225,7 +249,7 @@ private fun WeekStrip(
     selectedWeekday: Int,
     onSelect: (Int) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -234,7 +258,7 @@ private fun WeekStrip(
         days.forEach { day ->
             val selected = day.weekday == selectedWeekday
             val isToday = day.date == todayDate ||
-                (todayDate.isBlank() && day.weekday == todayAtCampusClock().dayOfWeek.value)
+                (todayDate.isBlank() && day.weekday == todayAtSchoolClock().dayOfWeek.value)
             val date = parseScheduleDate(day.date)
             Column(
                 modifier = Modifier
@@ -283,7 +307,7 @@ private fun WeekStrip(
 
 @Composable
 private fun DayHeading(day: ApiScheduleDay, weekday: Int, isToday: Boolean, classCount: Int) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val date = parseScheduleDate(day.date)
     val dayNumber = date?.dayOfMonth?.toString()
         ?: day.date.takeLast(2).trimStart('0').ifBlank { "–" }
@@ -322,7 +346,8 @@ private fun DayHeading(day: ApiScheduleDay, weekday: Int, isToday: Boolean, clas
 /**
  * One paper timeline row. `slot` is null for non-today days (neutral), or the
  * live UPCOMING/CURRENT/PAST state computed on the school clock. The whole row
- * is tappable and opens the course detail sheet.
+ * is tappable: the caller resolves the attendance code and either monitors the
+ * room directly or opens the course detail sheet.
  */
 @Composable
 private fun DayTimelineRow(
@@ -331,7 +356,7 @@ private fun DayTimelineRow(
     isNext: Boolean,
     onCourseTap: () -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val dark = colors.canvas.luminance() < 0.4f
     val displayName = courseDisplayName(event.courseName, LocalCourseOverrides.current)
     val ink = courseAccent(displayName, dark)
@@ -443,7 +468,7 @@ internal fun TermOverview(
     currentWeek: Int,
     onOpen: (String) -> Unit
 ) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     Column(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(title = "学期总览", meta = if (courses.isEmpty()) null else "${courses.size} 门")
         when {
@@ -472,7 +497,7 @@ internal fun TermOverview(
 
 @Composable
 private fun TermCourseRow(course: JwxtTermCourse, currentWeek: Int, onOpen: () -> Unit) {
-    val colors = LocalRinColors.current
+    val colors = LocalSuiSignColors.current
     val inProgress = currentWeek in course.firstWeek..course.lastWeek
     val span = (course.lastWeek - course.firstWeek + 1).coerceAtLeast(1)
     val progress = if (currentWeek <= 0) {
@@ -566,7 +591,7 @@ private fun parseScheduleDate(value: String): LocalDate? =
  */
 private fun weekDays(overview: ApiScheduleOverview): List<ApiScheduleDay> {
     val provided = overview.days.associateBy { it.weekday }
-    val reference = todayAnchor(overview.date) ?: todayAtCampusClock()
+    val reference = todayAnchor(overview.date) ?: todayAtSchoolClock()
     val monday = reference.with(DayOfWeek.MONDAY)
     return (1..7).map { weekday ->
         provided[weekday] ?: ApiScheduleDay(

@@ -20,15 +20,15 @@ import top.sykesp42.rin.ui.components.Hairline
 import top.sykesp42.rin.ui.formatDateLine
 import top.sykesp42.rin.ui.schedule.ExamItem
 import top.sykesp42.rin.ui.schedule.nextExamItem
-import top.sykesp42.rin.ui.theme.LocalRinColors
+import top.sykesp42.rin.ui.theme.LocalSuiSignColors
 import top.sykesp42.rin.ui.theme.courseAccent
 
 /** The nearest dated exam, with a quiet countdown and its real time/room. */
 @Composable
 internal fun ExamCountdownHero(items: List<ExamItem>, today: LocalDate) {
     val next = nextExamItem(items, today) ?: return
-    val colors = LocalRinColors.current
-    val ink = courseAccent(next.exam.name, colors.canvas.luminance() < 0.4f)
+    val colors = LocalSuiSignColors.current
+    val ink = courseAccent(next.exam.courseName, colors.canvas.luminance() < 0.4f)
     val clock = when {
         next.time.start.isNotBlank() && next.time.end.isNotBlank() ->
             "${next.time.start}-${next.time.end}"
@@ -37,7 +37,8 @@ internal fun ExamCountdownHero(items: List<ExamItem>, today: LocalDate) {
     }
     val detail = listOfNotNull(
         clock.takeIf { it.isNotBlank() },
-        next.exam.location.takeIf { it.isNotBlank() }
+        next.exam.location.takeIf { it.isNotBlank() },
+        next.exam.seat.takeIf { it.isNotBlank() }?.let { "座号 $it" }
     ).joinToString(" · ")
 
     Column(
@@ -59,7 +60,7 @@ internal fun ExamCountdownHero(items: List<ExamItem>, today: LocalDate) {
             )
         }
         Text(
-            text = next.exam.name,
+            text = next.exam.courseName,
             color = ink,
             style = MaterialTheme.typography.titleMedium,
             maxLines = 2,
@@ -98,8 +99,8 @@ internal fun ExamCountdownHero(items: List<ExamItem>, today: LocalDate) {
 /** One exam row: course ink, countdown on the right, raw time/room below. */
 @Composable
 internal fun ExamRow(item: ExamItem) {
-    val colors = LocalRinColors.current
-    val ink = courseAccent(item.exam.name, colors.canvas.luminance() < 0.4f)
+    val colors = LocalSuiSignColors.current
+    val ink = courseAccent(item.exam.courseName, colors.canvas.luminance() < 0.4f)
     val countdownColor = when {
         item.countdown == "已结束" || item.countdown == "时间待确认" -> colors.textSecondary
         item.countdown.startsWith("今天") -> colors.signal
@@ -107,14 +108,15 @@ internal fun ExamRow(item: ExamItem) {
     }
     val detail = listOfNotNull(
         item.exam.time.takeIf { it.isNotBlank() },
-        item.exam.location.takeIf { it.isNotBlank() }
+        item.exam.location.takeIf { it.isNotBlank() },
+        item.exam.seat.takeIf { it.isNotBlank() }?.let { "座号 $it" }
     ).joinToString(" · ")
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(vertical = 11.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 Text(
-                    text = item.exam.name,
+                    text = item.exam.courseName,
                     color = ink,
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 2,
