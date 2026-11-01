@@ -261,29 +261,45 @@ private fun HandoffScreen(
             return@LaunchedEffect
         }
         val raw: String = if (currentSettings.localMode) {
+            var localFailure: HandoffState.Failed? = null
             val png = try {
                 withContext(Dispatchers.IO) { monitor.qrPng(roomCode) }
             } catch (error: ApiError) {
-                recordFailure()
-                state = HandoffState.Failed("拿不到签到码", ErrorCopy.forCode(error.code, error.message))
-                return@LaunchedEffect
+                localFailure = HandoffState.Failed("拿不到签到码", ErrorCopy.forCode(error.code, error.message))
+                null
             } catch (error: Exception) {
-                recordFailure()
-                state = HandoffState.Failed("拿不到签到码", ErrorCopy.from(error))
-                return@LaunchedEffect
+                localFailure = HandoffState.Failed("拿不到签到码", ErrorCopy.from(error))
+                null
             }
+            var decoded: String? = null
             if (png == null) {
-                recordFailure()
-                state = HandoffState.Failed(
-                    "拿不到签到码",
-                    "人数没到安全线，或签到已结束。回Rin刷新后再试。"
-                )
-                return@LaunchedEffect
+                if (localFailure == null) {
+                    localFailure = HandoffState.Failed(
+                        "拿不到签到码",
+                        "人数没到安全线，或签到已结束。回Rin刷新后再试。"
+                    )
+                }
+            } else {
+                decoded = decodeQrPng(png)
+                if (decoded == null) {
+                    localFailure = HandoffState.Failed("签到码无法解析", "回Rin刷新后重试。", needsApp = true)
+                }
             }
-            decodeQrPng(png) ?: run {
-                recordFailure()
-                state = HandoffState.Failed("签到码无法解析", "回Rin刷新后重试。", needsApp = true)
-                return@LaunchedEffect
+            // 本地拿不到码时，云端保底站点直接铸造反代链接，同一轮不再失败。
+            decoded ?: run {
+                val fallback = if (currentSettings.serverUrl.isNotBlank() && container.sessionStore.load() != null) {
+                    val api = container.client(currentSettings.serverUrl)
+                    runCatching {
+                        withContext(Dispatchers.IO) { api?.signURL(roomCode) }
+                    }.getOrNull()?.takeIf { SignUrl.isValid(it) }
+                } else {
+                    null
+                }
+                fallback ?: run {
+                    recordFailure()
+                    state = localFailure ?: HandoffState.Failed("拿不到签到码", "回Rin刷新后再试。")
+                    return@LaunchedEffect
+                }
             }
         } else {
             if (currentSettings.serverUrl.isBlank() || container.sessionStore.load() == null) {
