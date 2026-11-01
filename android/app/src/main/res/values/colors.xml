@@ -1,0 +1,7 @@
+<resources>
+    <color name="ic_launcher_background">#11161A</color>
+    <!-- Matches RinTokens.canvas, the paper the in-app splash paints. -->
+    <color name="splash_paper">#F7F6F1</color>
+    <!-- Matches DarkTokens.canvas: what a dark cold start opens on. -->
+    <color name="splash_ink">#0B1620</color>
+</resources>

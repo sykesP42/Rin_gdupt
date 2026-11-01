@@ -1,0 +1,5 @@
+<resources>
+    <!-- No stored hint yet on the very first launch, so the cold-start window
+         follows the system: a dark shade must never flash paper white. -->
+    <style name="Theme.Rin.Launch" parent="Theme.Rin.Launch.Dark" />
+</resources>

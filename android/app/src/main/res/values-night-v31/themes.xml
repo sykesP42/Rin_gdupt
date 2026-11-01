@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Rin.Launch" parent="Theme.Rin.Launch">
+        <item name="android:windowSplashScreenBackground">@color/splash_ink</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_blank</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_ink</item>
+    </style>
+</resources>

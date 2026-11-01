@@ -1,0 +1,21 @@
+<resources>
+    <style name="Theme.Rin.Launch" parent="Theme.Rin">
+        <item name="android:windowBackground">@color/splash_paper</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_paper</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_blank</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_paper</item>
+    </style>
+
+    <style name="Theme.Rin.Launch.Light" parent="Theme.Rin.Launch">
+        <item name="android:windowSplashScreenBackground">@color/splash_paper</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_blank</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_paper</item>
+    </style>
+
+    <style name="Theme.Rin.Launch.Dark" parent="Theme.Rin.Dark">
+        <item name="android:windowSplashScreenBackground">@color/splash_ink</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_blank</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_ink</item>
+    </style>
+</resources>

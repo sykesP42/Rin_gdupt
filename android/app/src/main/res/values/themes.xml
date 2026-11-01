@@ -1,0 +1,36 @@
+<resources>
+    <style name="Theme.Rin" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.Rin.Launch" parent="Theme.Rin">
+        <!-- Match the paper the in-app splash paints, so cold start does not
+             flash a different white before the cream splash appears. -->
+        <item name="android:windowBackground">@color/splash_paper</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- Picked at runtime from the last resolved appearance, so a forced-dark app
+         theme on a light system (or the reverse) never opens on the wrong colour. -->
+    <style name="Theme.Rin.Launch.Light" parent="Theme.Rin">
+        <item name="android:windowBackground">@color/splash_paper</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <!-- A dark window needs a dark platform base, not just a dark background:
+         the platform theme also drives the splash icon tint and bar defaults. -->
+    <style name="Theme.Rin.Dark" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/splash_ink</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.Rin.Launch.Dark" parent="Theme.Rin.Dark">
+        <item name="android:windowBackground">@color/splash_ink</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>
