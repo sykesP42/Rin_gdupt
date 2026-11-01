@@ -54,10 +54,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import top.sykesp42.rin.MainActivity
 import top.sykesp42.rin.data.ApiError
 import top.sykesp42.rin.data.AppContainer
@@ -261,45 +263,38 @@ private fun HandoffScreen(
             return@LaunchedEffect
         }
         val raw: String = if (currentSettings.localMode) {
-            var localFailure: HandoffState.Failed? = null
-            val png = try {
-                withContext(Dispatchers.IO) { monitor.qrPng(roomCode) }
-            } catch (error: ApiError) {
-                localFailure = HandoffState.Failed("拿不到签到码", ErrorCopy.forCode(error.code, error.message))
-                null
-            } catch (error: Exception) {
-                localFailure = HandoffState.Failed("拿不到签到码", ErrorCopy.from(error))
-                null
-            }
-            var decoded: String? = null
-            if (png == null) {
-                if (localFailure == null) {
-                    localFailure = HandoffState.Failed(
-                        "拿不到签到码",
-                        "人数没到安全线，或签到已结束。回Rin刷新后再试。"
-                    )
-                }
-            } else {
-                decoded = decodeQrPng(png)
-                if (decoded == null) {
-                    localFailure = HandoffState.Failed("签到码无法解析", "回Rin刷新后重试。", needsApp = true)
-                }
-            }
-            // 本地拿不到码时，云端保底站点直接铸造反代链接，同一轮不再失败。
-            decoded ?: run {
-                val fallback = if (currentSettings.serverUrl.isNotBlank() && container.sessionStore.load() != null) {
-                    val api = container.client(currentSettings.serverUrl)
+            // 本地与云端同时出发，哪边先拿到可用的签到入口就用哪边。
+            val winner = CompletableDeferred<String>()
+            val jobs = listOf(
+                // 本地：学校二维码 → 解码出签到链接。
+                launch {
                     runCatching {
-                        withContext(Dispatchers.IO) { api?.signURL(roomCode) }
-                    }.getOrNull()?.takeIf { SignUrl.isValid(it) }
-                } else {
-                    null
+                        val png = withContext(Dispatchers.IO) { monitor.qrPng(roomCode) }
+                        val url = png?.let { decodeQrPng(it) }
+                        if (url != null && SignUrl.isValid(url)) winner.complete(url)
+                    }
+                },
+                // 云端：保底站点直接铸造反代链接。
+                launch {
+                    runCatching {
+                        if (currentSettings.serverUrl.isNotBlank() && container.sessionStore.load() != null) {
+                            container.client(currentSettings.serverUrl)?.let { api ->
+                                val url = withContext(Dispatchers.IO) { api.signURL(roomCode) }
+                                if (SignUrl.isValid(url)) winner.complete(url)
+                            }
+                        }
+                    }
                 }
-                fallback ?: run {
-                    recordFailure()
-                    state = localFailure ?: HandoffState.Failed("拿不到签到码", "回Rin刷新后再试。")
-                    return@LaunchedEffect
-                }
+            )
+            val got = withTimeoutOrNull(15_000) { winner.await() }
+            jobs.forEach { it.cancel() }
+            got ?: run {
+                recordFailure()
+                state = HandoffState.Failed(
+                    "拿不到签到码",
+                    "本地和云端都没取到可用的签到入口。回Rin刷新后再试。"
+                )
+                return@LaunchedEffect
             }
         } else {
             if (currentSettings.serverUrl.isBlank() || container.sessionStore.load() == null) {

@@ -14,8 +14,10 @@ import androidx.core.content.ContextCompat
 import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -463,22 +465,41 @@ class MonitorService : Service() {
 
         override suspend fun fetchSignQr(roomCode: String): ByteArray? {
             val settings = runCatching { container.settings.current() }.getOrNull() ?: return null
-            // Failover-aware primary: local-first, cloud proxy after repeated
-            // failures — the automation must not depend on one transport. Two
-            // bounded attempts ride out a transient blip inside one round.
-            container.monitorApi(settings)?.let { api ->
-                repeat(2) { attempt ->
-                    runCatching { withContext(Dispatchers.IO) { api.qrPng(roomCode) } }
-                        .getOrNull()?.takeIf(::looksLikePng)?.let { return it }
-                    if (attempt == 0) delay(1200)
-                }
+            // 云端与本地同时出发，哪边先铸出可用的码就用哪边（hedged request）。
+            // 本地侧保留一次重试；整场竞速限时 12s，防止双方都卡死拖垮监控循环。
+            val primary = container.monitorApi(settings)
+            val cloud = container.client(settings.serverUrl)
+            if (primary == null && cloud == null) return null
+            return coroutineScope {
+                val winner = CompletableDeferred<ByteArray?>()
+                val jobs = listOfNotNull(
+                    primary?.let { api ->
+                        launch {
+                            repeat(2) { attempt ->
+                                val png = runCatching {
+                                    withContext(Dispatchers.IO) { api.qrPng(roomCode) }
+                                }.getOrNull()
+                                if (png != null && looksLikePng(png)) {
+                                    winner.complete(png)
+                                    return@launch
+                                }
+                                if (attempt == 0) delay(1200)
+                            }
+                        }
+                    },
+                    cloud?.let { api ->
+                        launch {
+                            val png = runCatching {
+                                withContext(Dispatchers.IO) { api.qrCode(roomCode) }
+                            }.getOrNull()
+                            if (png != null && looksLikePng(png)) winner.complete(png)
+                        }
+                    }
+                )
+                val got = withTimeoutOrNull(12_000) { winner.await() }
+                jobs.forEach { it.cancel() }
+                got
             }
-            // Last resort: mint the QR on the cloud directly (its sign-url
-            // reverse proxy), skipped when no cloud session exists.
-            val api = container.client(settings.serverUrl) ?: return null
-            return runCatching {
-                withContext(Dispatchers.IO) { api.qrCode(roomCode) }
-            }.getOrNull()?.takeIf(::looksLikePng)
         }
 
         override suspend fun publishQrImage(png: ByteArray): Boolean =
