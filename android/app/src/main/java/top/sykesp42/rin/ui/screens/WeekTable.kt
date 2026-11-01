@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -632,6 +633,7 @@ fun WeekTableCanvas(
     onCourseTap: (ApiScheduleEvent) -> Unit = {},
     onSwipeWeek: (Int) -> Unit = {},
     onShare: (String) -> Unit = {},
+    onShareOptions: () -> Unit = {},
     weekLabel: String = "",
     shareStyle: ShareStyle = ShareStyle.PLAIN,
     shareOwner: String = "",
@@ -838,6 +840,7 @@ fun WeekTableCanvas(
                     offset = Offset.Zero
                 },
                 onShare = { sharePng() },
+                onShareOptions = onShareOptions,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
@@ -847,12 +850,14 @@ fun WeekTableCanvas(
 }
 
 /** The zoom read-out doubles as the reset, so it only exists while zoomed. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun CanvasCornerControls(
     zoomed: Boolean,
     percent: Int,
     onReset: () -> Unit,
     onShare: () -> Unit,
+    onShareOptions: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalSuiSignColors.current
@@ -879,12 +884,12 @@ private fun CanvasCornerControls(
             modifier = Modifier
                 .size(30.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onShare),
+                .combinedClickable(onClick = onShare, onLongClick = onShareOptions),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Filled.Share,
-                contentDescription = "分享课表",
+                contentDescription = "分享课表（长按选择水印）",
                 tint = colors.textSecondary,
                 modifier = Modifier.size(15.dp)
             )

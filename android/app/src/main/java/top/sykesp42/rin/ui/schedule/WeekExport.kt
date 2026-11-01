@@ -137,8 +137,38 @@ private class CardPainter(
         canvas.drawText(title(weekLabel), x, y, paint)
 
         text(false, palette.textSecondary, size * 0.44f)
-        val sub = if (style == ShareStyle.WATERMARK && owner.isNotBlank()) "${owner}的课表" else dates.orEmpty()
-        if (sub.isNotBlank()) canvas.drawText(sub, x, y + size * 0.58f, paint)
+        if (dates.isNullOrBlank()) return
+        canvas.drawText(dates, x, y + size * 0.58f, paint)
+    }
+
+    /**
+     * 带水印: "@owner" tiled across the whole image, rotated, faint and
+     * deliberately sparse — one mark every few hundred pixels, staggered per
+     * row so it reads as scattered rather than a grid.
+     */
+    private fun drawWatermark(canvas: Canvas, width: Float, height: Float) {
+        if (style != ShareStyle.WATERMARK || owner.isBlank()) return
+        text(false, palette.text, 30f)
+        paint.alpha = 30
+        val label = "@$owner"
+        val stepX = (paint.measureText(label) + 330f).coerceAtLeast(430f)
+        val stepY = 300f
+        var y = -60f
+        var row = 0
+        while (y < height + 60f) {
+            val stagger = if (row % 2 == 1) stepX / 2f else 0f
+            var x = -180f + stagger
+            while (x < width + 180f) {
+                canvas.save()
+                canvas.rotate(-22f, x, y)
+                canvas.drawText(label, x, y, paint)
+                canvas.restore()
+                x += stepX
+            }
+            y += stepY
+            row++
+        }
+        paint.alpha = 255
     }
 
     private fun drawFooter(canvas: Canvas, width: Float, height: Float) {
@@ -154,6 +184,7 @@ private class CardPainter(
         val canvas = Canvas(bitmap)
         canvas.drawColor(palette.canvas)
         body(canvas)
+        drawWatermark(canvas, width.toFloat(), height.toFloat())
         drawFooter(canvas, width.toFloat(), height.toFloat())
         return bitmap
     }
@@ -194,13 +225,8 @@ private class CardPainter(
                 pad, 88f, paint
             )
             text(false, palette.textSecondary, 25f)
-            val subtitle = if (style == ShareStyle.WATERMARK && owner.isNotBlank()) {
-                "${owner} · ${report.subtitle}"
-            } else {
-                report.subtitle
-            }
             canvas.drawText(
-                TextUtils.ellipsize(subtitle, paint, width - pad * 2, TextUtils.TruncateAt.END).toString(),
+                TextUtils.ellipsize(report.subtitle, paint, width - pad * 2, TextUtils.TruncateAt.END).toString(),
                 pad, 128f, paint
             )
             fill.color = palette.border

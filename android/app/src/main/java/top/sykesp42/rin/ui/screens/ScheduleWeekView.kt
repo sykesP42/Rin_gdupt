@@ -265,9 +265,10 @@ fun ScheduleWeekView(
                 shareStyle = shareStyle,
                 shareOwner = shareOwner,
                 appVersion = appVersion,
-                // Table shares always use the portrait, full-information card;
-                // the seven-column grid cannot keep names readable once shared.
-                shareFormat = ShareFormat.ROWS,
+                // The dialog's 版式 choice applies here too: 竖排 renders the
+                // full-information row card, 横排 renders the seven-column grid.
+                shareFormat = shareFormat,
+                onShareOptions = { stylePickerOpen = true },
                 // Fallback when the share card cannot be written.
                 onShare = { text ->
                     runCatching {
