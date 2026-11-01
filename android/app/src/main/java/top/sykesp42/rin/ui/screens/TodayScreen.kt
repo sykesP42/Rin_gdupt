@@ -580,7 +580,22 @@ fun TodayScreen(
                             onOpenSign = onOpenSign
                         )
                     }
-                    for (card in TodayCards.enabled(appSettings)) {
+                }
+                if (!signOnly && !minimal) {
+                    val enabledCards = TodayCards.enabled(appSettings)
+                    if (enabledCards.isEmpty()) {
+                        item(key = "cards-empty") {
+                            Text(
+                                text = "目前未添加额外卡片，去「我的 → 今日卡片」挑几张喜欢的吧。",
+                                color = LocalSuiSignColors.current.textSecondary,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 10.dp)
+                            )
+                        }
+                    }
+                    for (card in enabledCards) {
                         when (card) {
                             TodayCardId.COMPANION -> item(key = "card-companion") {
                                 RinCompanionCard(
