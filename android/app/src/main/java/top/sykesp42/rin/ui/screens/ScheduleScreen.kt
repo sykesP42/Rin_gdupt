@@ -160,7 +160,6 @@ fun ScheduleScreen(
         }.getOrNull().orEmpty()
     }
     val today by vm.today.collectAsStateWithLifecycle()
-    val signAccess by vm.signAccess.collectAsStateWithLifecycle()
     val gradesState by vm.grades.collectAsStateWithLifecycle()
     val courseOverrides by vm.courseOverrides.collectAsStateWithLifecycle()
     val catalog by vm.classroomCatalog.collectAsStateWithLifecycle()
@@ -995,14 +994,7 @@ fun ScheduleScreen(
                 openedCourseEvent = null
                 vm.dismissCourseDetail()
             },
-            onMonitor = { code ->
-                // Tap -> sheet -> here: switch the monitor and land on Today,
-                // where the live sign state is.
-                vm.useRoom(code)
-                openedCourseEvent = null
-                vm.dismissCourseDetail()
-                onGoToday()
-            },
+            onMonitor = null,
             onOpenFreeRooms = { day, sections ->
                 openedCourseEvent = null
                 vm.dismissCourseDetail()
@@ -1015,7 +1007,6 @@ fun ScheduleScreen(
             reminders = reminders.reminders,
             onSaveReminder = vm::saveCourseReminder,
             onDeleteReminder = vm::removeCourseReminder,
-            signAccessEnabled = signAccess.proEnabled
         )
     }
 

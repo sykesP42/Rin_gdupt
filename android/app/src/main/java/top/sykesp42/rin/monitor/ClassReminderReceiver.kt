@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import top.sykesp42.rin.data.AppContainer
+import top.sykesp42.rin.data.HistoryKind
 import top.sykesp42.rin.data.ApiScheduleOverview
 import top.sykesp42.rin.monitor.nextDailyRearm
 import java.time.Instant

@@ -122,3 +122,7 @@ data class ApiSignSettings(
 data class ApiJwxtAccount(
     val configured: Boolean = false
 )
+/** The app's own version, used for cache stamps and share watermarks. */
+fun appVersionName(context: android.content.Context): String = runCatching {
+    context.packageManager.getPackageInfo(context.packageName, 0).versionName
+}.getOrNull().orEmpty().ifBlank { "0.0.0" }

@@ -11,7 +11,6 @@ import kotlinx.serialization.builtins.ListSerializer
 import top.sykesp42.rin.monitor.MonitorAlarms
 import top.sykesp42.rin.monitor.ClassReminderAlarms
 import top.sykesp42.rin.monitor.MonitorNotifications
-import top.sykesp42.rin.monitor.MonitorScheduler
 
 /** Manual dependency container: no Hilt/Koin, keeps the APK small. */
 class AppContainer private constructor(context: Context) {

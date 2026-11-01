@@ -18,21 +18,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /**
- * Local-mode MonitorApi: talks to the school's read-only attendance endpoints
- * directly (the same ones the cloud server proxies), so the phone keeps
- * monitoring and signing with no external services. Roster matching uses the
- * locally configured real name; the safety threshold stays enforced here.
- *
- * Ported from the Go server: internal/upstream/client.go (read-only calls)
- * and internal/course/service.go (roster/threshold/status rules).
+ * Local-mode MonitorApi: derives the read-only course recommendation from the
+ * cached timetable and serves the schedule. No sign-side endpoints exist in
+ * this build, so room-code matching never happens and statuses stay honest.
  */
 class LocalSchoolApi(
-    private val baseUrl: String = "https://wa.gdupt.edu.cn",
-    private val schoolId: String = "11656",
-    private val rosterName: () -> String,
-    private val threshold: () -> Int,
     private val scheduleProvider: suspend () -> ApiScheduleOverview = { ApiScheduleOverview() },
-    private val roomCodeFor: suspend (String) -> String? = { null },
     private val clock: () -> Instant = Instant::now,
     private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(java.time.Duration.ofSeconds(8)).build()
 ) : MonitorApi {
@@ -63,12 +54,9 @@ class LocalSchoolApi(
         val next = events.firstOrNull { sectionMinutes(it.startTime) > minutes }
         val event = current ?: next ?: return ApiRecommendation(status = "day_done")
         val phase = if (event === current) "current" else "pre"
-        val code = roomCodeFor(event.location) ?: return ApiRecommendation(
-            status = "unknown_room", phase = phase, room = ApiRoomRef(roomName = event.location)
-        )
         return ApiRecommendation(
             status = "matched", phase = phase,
-            room = ApiRoomRef(roomCode = code, roomName = event.location)
+            room = ApiRoomRef(roomName = event.location)
         )
     }
 
@@ -78,9 +66,4 @@ class LocalSchoolApi(
     }
 
     override suspend fun schedule(): ApiScheduleOverview = scheduleProvider()
-
-    override suspend fun course(code: String): ApiCourse = withContext(Dispatchers.IO) {
-        loadDetails(code).toApiCourse()
-    }
-
-        
+}
