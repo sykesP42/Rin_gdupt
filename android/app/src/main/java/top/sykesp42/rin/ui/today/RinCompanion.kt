@@ -61,7 +61,6 @@ data class RinCompanionProfile(
 enum class CompanionAction(val label: String) {
     NONE(""),
     SCHEDULE("看看课表"),
-    SIGN("去签到"),
     NEWS("看校园要闻")
 }
 

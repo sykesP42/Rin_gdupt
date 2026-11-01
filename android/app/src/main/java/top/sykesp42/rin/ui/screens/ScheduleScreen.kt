@@ -994,7 +994,6 @@ fun ScheduleScreen(
                 openedCourseEvent = null
                 vm.dismissCourseDetail()
             },
-            onMonitor = null,
             onOpenFreeRooms = { day, sections ->
                 openedCourseEvent = null
                 vm.dismissCourseDetail()

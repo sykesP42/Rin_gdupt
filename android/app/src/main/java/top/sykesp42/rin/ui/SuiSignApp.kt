@@ -219,7 +219,7 @@ private fun MainScaffold(
             }
         ) { padding ->
             AnimatedContent(
-                targetState = tab to historyOpen,
+                targetState = tab,
                 transitionSpec = {
                     if (!animations) {
                         fadeIn(tween(0)) togetherWith fadeOut(tween(0))
@@ -235,7 +235,7 @@ private fun MainScaffold(
                     .fillMaxSize()
                     .padding(padding)
                     .consumeWindowInsets(padding)
-            ) { (activeTab, _) ->
+            ) { activeTab ->
                 when (activeTab) {
                     MainTab.TODAY -> TodayScreen(
                         vm = vm,
@@ -261,7 +261,7 @@ private fun MainScaffold(
                             onToggleTheme = openThemePicker,
                             onGoToday = { selectTab(MainTab.TODAY) },
                             academicOnly = true,
-                            initialSegment = campusSection,
+                            initialSegment = campusSection ?: 0,
                             onBack = { campusSection = null }
                         )
                     }

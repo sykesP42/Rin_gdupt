@@ -77,7 +77,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.provider.Settings
 import java.time.Instant
 import top.sykesp42.rin.R
-import top.sykesp42.rin.auto.AutoRuntime
 import top.sykesp42.rin.data.AppContainer
 import top.sykesp42.rin.data.PET_OFFSET_LIMIT
 import top.sykesp42.rin.data.PET_SCALE_MAX
@@ -92,7 +91,6 @@ import top.sykesp42.rin.monitor.NoticeSlot
 import top.sykesp42.rin.monitor.SystemPermissions
 import top.sykesp42.rin.ui.AppViewModel
 import top.sykesp42.rin.ui.Identity
-import top.sykesp42.rin.ui.SettingsUiState
 import top.sykesp42.rin.ui.components.AccentColorRow
 import top.sykesp42.rin.ui.components.Avatar
 import top.sykesp42.rin.ui.components.CornerStyleRow
@@ -142,13 +140,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val container = remember { AppContainer.get(context) }
     val colors = LocalSuiSignColors.current
-    // Single source for the service name: the manifest label and this consent
-    // dialog must never drift apart.
-    val autoServiceLabel = stringResource(R.string.auto_service_label)
-    val settingsPage by vm.settingsPage.collectAsStateWithLifecycle()
     val today by vm.today.collectAsStateWithLifecycle()
-    val signAccess by vm.signAccess.collectAsStateWithLifecycle()
-    val signAccessPro = signAccess.proEnabled
     var destination by rememberSaveable { mutableStateOf(SettingsDestination.Home) }
     var coverEditorOpen by remember { mutableStateOf(false) }
     var coverBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -159,10 +151,6 @@ fun SettingsScreen(
     LaunchedEffect(profileSignal) {
         if (profileSignal > 0) destination = SettingsDestination.Profile
     }
-    var confirmZero by remember { mutableStateOf(false) }
-    var confirmAuto by remember { mutableStateOf(false) }
-    var pendingEnable by remember { mutableStateOf(false) }
-    var pendingAuto by remember { mutableStateOf(false) }
     val drafts = rememberSettingsAdvancedDrafts()
     // Spec 2.2: 24dp page inset, tightened to 20dp on narrow phones.
     val pageInset = if (LocalConfiguration.current.screenWidthDp < 360) 20.dp else 24.dp
@@ -178,28 +166,12 @@ fun SettingsScreen(
     val notificationsGranted = remember(permissionsTick) { container.notifications.canPost() }
     val exactGranted = remember(permissionsTick) { SystemPermissions.canScheduleExactAlarms(context) }
     val batteryIgnored = remember(permissionsTick) { SystemPermissions.isIgnoringBatteryOptimizations(context) }
-    val autoServiceConnected = remember(permissionsTick) { AutoRuntime.isConnected() }
     val permissionReady = listOf(notificationsGranted, exactGranted, batteryIgnored).count { it }
     val animationsEnabled = LocalAnimationsEnabled.current
 
-    // Complete a pending auto-mode enable once the user returns from the
-    // accessibility settings with the service actually switched on.
-    LaunchedEffect(permissionsTick) {
-        if (pendingAuto && autoServiceConnected) {
-            pendingAuto = false
-            vm.setAutoSignEnabled(true)
-        } else if (pendingAuto && settings.autoSignEnabled) {
-            pendingAuto = false
-        }
-    }
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permissionsTick++
-        if (granted && pendingEnable) {
-            pendingEnable = false
-            vm.enableMonitoring()
-        } else if (!granted) {
-            pendingEnable = false
-        }
+        if (!granted) vm.notify("没有通知权限，课程提醒不会弹横幅")
     }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) {
@@ -226,11 +198,6 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(Unit) { vm.ensureThresholdLoaded() }
-    // Same sync the old `remember(savedValue)` blocks did, kept alive across the collapse.
-    LaunchedEffect(settingsPage.threshold) { drafts.threshold = settingsPage.threshold }
-    LaunchedEffect(settings.rosterName) { drafts.rosterName = settings.rosterName }
-
     // Returns true only when the intent actually launched; callers gate consent flags on it.
     fun launchIntent(intent: Intent?, failure: String): Boolean {
         if (intent == null) {
@@ -240,45 +207,6 @@ fun SettingsScreen(
         val launched = runCatching { context.startActivity(intent) }.isSuccess
         if (!launched) vm.notify(failure)
         return launched
-    }
-
-    fun toggleMonitoring(next: Boolean) {
-        if (!next) {
-            vm.disableMonitoring()
-            return
-        }
-        if (!notificationsGranted && Build.VERSION.SDK_INT >= 33) {
-            pendingEnable = true
-            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            return
-        }
-        vm.enableMonitoring()
-    }
-
-    fun toggleAutoSign(next: Boolean) {
-        if (!next) {
-            vm.setAutoSignEnabled(false)
-        } else if (autoServiceConnected && settings.monitorEnabled) {
-            vm.setAutoSignEnabled(true)
-        } else {
-            confirmAuto = true
-        }
-    }
-
-    fun saveThresholdValue(value: Int) {
-        if (value == 0) {
-            confirmZero = true
-        } else {
-            vm.saveThreshold(value, "")
-        }
-    }
-
-    fun openAccessibilitySettings() {
-        // Only arm the pending auto-sign enable once the accessibility screen really opened;
-        // a failed launch must not silently flip auto-sign on a later resume.
-        if (launchIntent(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "打不开无障碍设置")) {
-            pendingAuto = true
-        }
     }
 
     fun openWeb() {
@@ -310,30 +238,11 @@ fun SettingsScreen(
             SettingsDestination.Home -> SettingsHomeContent(
                 user = user,
                 settings = settings,
-                running = today.running,
                 permissionReady = permissionReady,
-                autoServiceConnected = autoServiceConnected,
-                signAccessPro = signAccessPro,
                 customThemeActive = settings.customThemeEnabled && settings.customThemeImage.isNotBlank(),
                 themeMode = themeMode,
                 onOpen = { destination = it },
-                onRefresh = { vm.loadThreshold() },
                 onToggleTheme = onToggleTheme
-            )
-            SettingsDestination.Automation -> SettingsAutomationContent(
-                vm = vm,
-                settings = settings,
-                settingsPage = settingsPage,
-                drafts = drafts,
-                running = today.running,
-                stopAt = today.stopAt,
-                autoServiceConnected = autoServiceConnected,
-                signAccessPro = signAccessPro,
-                onBack = { destination = SettingsDestination.Home },
-                onMonitorChange = { next -> toggleMonitoring(next) },
-                onAutoSignChange = { next -> toggleAutoSign(next) },
-                onOpenAccessibility = { openAccessibilitySettings() },
-                onSaveThreshold = { value -> saveThresholdValue(value) }
             )
             SettingsDestination.SystemReady -> SettingsSystemReadyContent(
                 notificationsGranted = notificationsGranted,
@@ -486,52 +395,6 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmReset = false }) {
-                    Text("取消", color = colors.textSecondary)
-                }
-            }
-        )
-    }
-    if (confirmAuto) {
-        SuiAlertDialog(
-            onDismissRequest = { confirmAuto = false },
-            title = { Text("开启自动签到？") },
-            text = {
-                Text(
-                    "开启后，手机需亮屏解锁，并在本机企业微信里识别当次二维码。" +
-                        "普通微信仍需你手动打开；识码完成后临时图片会删除。" +
-                        "自动化可能被微信风控，失败会回到通知，让你手动签到。"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmAuto = false
-                    openAccessibilitySettings()
-                }) {
-                    Text("去开启")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmAuto = false }) {
-                    Text("取消", color = colors.textSecondary)
-                }
-            }
-        )
-    }
-    if (confirmZero) {
-        SuiAlertDialog(
-            onDismissRequest = { confirmZero = false },
-            title = { Text("关闭自动跳转？") },
-            text = { Text("设为 0 后每次手动确认。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmZero = false
-                    vm.saveThreshold(0, "确认修改")
-                }) {
-                    Text("确认关闭", color = colors.warning)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmZero = false }) {
                     Text("取消", color = colors.textSecondary)
                 }
             }
@@ -955,56 +818,6 @@ private fun RinMotionSection(
     }
 }
 
-/**
- * 签到自动化 (visible part): the monitor switch and its runtime line. The auto-sign flow,
- * threshold, data source and diagnostics are inside the collapsed 高级设置 row.
- */
-@Composable
-private fun AutomationSection(
-    settings: AppSettings,
-    running: Boolean,
-    stopAt: Instant?,
-    autoServiceConnected: Boolean,
-    signAccessPro: Boolean,
-    onMonitorChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = LocalSuiSignColors.current
-    Column(modifier.fillMaxWidth()) {
-        SectionHeader(
-            title = if (signAccessPro) "签到自动化" else "签到提醒",
-            meta = when {
-                !signAccessPro -> "仅提醒与名单"
-                settings.autoSignEnabled && autoServiceConnected -> "自动模式"
-                else -> "通知提醒"
-            }
-        )
-        PaperSwitchRow(
-            title = "后台监控",
-            description = when {
-                running -> "运行中，正在按课表检查。"
-                settings.monitorEnabled -> "已开启，会按课表检查。"
-                else -> "关闭后，上课时不会检查签到。"
-            },
-            checked = settings.monitorEnabled,
-            onCheckedChange = onMonitorChange,
-            contentDescription = "后台监控",
-            modifier = Modifier.padding(top = 8.dp)
-        )
-        if (running) {
-            stopAt?.let { at ->
-                Text(
-                    text = "本次运行至 ${formatClock(at)}",
-                    color = colors.textSecondary,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-        }
-    }
-}
-
-/** 权限与后台: the three existing permission rows, refreshed on every resume. */
 @Composable
 private fun PermissionSection(
     notificationsGranted: Boolean,
@@ -1132,7 +945,6 @@ private fun AboutSection(
 
 internal enum class SettingsDestination {
     Home,
-    Automation,
     SystemReady,
     Reminders,
     TodayCards,
@@ -1148,14 +960,10 @@ internal enum class SettingsDestination {
 private fun SettingsHomeContent(
     user: User,
     settings: AppSettings,
-    running: Boolean,
     permissionReady: Int,
-    autoServiceConnected: Boolean,
-    signAccessPro: Boolean,
     customThemeActive: Boolean,
     themeMode: ThemeMode,
     onOpen: (SettingsDestination) -> Unit,
-    onRefresh: () -> Unit,
     onToggleTheme: () -> Unit
 ) {
     val pageInset = if (LocalConfiguration.current.screenWidthDp < 360) 20.dp else 24.dp
@@ -1166,7 +974,6 @@ private fun SettingsHomeContent(
         }.getOrNull().orEmpty().ifBlank { "0.1.1" }
     }
     val session = sessionSummary(settings)
-    val monitor = monitorSummary(running, settings)
     val permission = permissionSummary(permissionReady)
 
     PaperPage {
@@ -1186,31 +993,16 @@ private fun SettingsHomeContent(
                     dateLine = "账号、外观与后台设置",
                     title = "我的",
                     avatarText = Identity.displayName(settings, user.displayName.ifBlank { user.username }),
-                    onRefresh = onRefresh,
+                    onRefresh = {},
                     onTheme = onToggleTheme
                 )
             }
             item(key = "status") {
                 SettingsStatusCard(
                     session = session,
-                    monitor = monitor,
                     permission = permission,
                     onOpenSession = { onOpen(SettingsDestination.Connection) },
-                    onOpenMonitor = { onOpen(SettingsDestination.Automation) },
                     onOpenPermissions = { onOpen(SettingsDestination.SystemReady) }
-                )
-            }
-            item(key = "nav-automation") {
-                SettingsNavigationCard(
-                    title = if (signAccessPro) "签到自动化" else "签到提醒与名单",
-                    summary = if (signAccessPro) {
-                        automationSummary(settings, autoServiceConnected)
-                    } else if (settings.monitorEnabled) {
-                        "后台提醒已开启 · 仅提醒与名单"
-                    } else {
-                        "仅提醒与名单"
-                    },
-                    onClick = { onOpen(SettingsDestination.Automation) }
                 )
             }
             item(key = "nav-system") {
@@ -1284,62 +1076,6 @@ private fun SettingsHomeContent(
                     title = "关于与隐私",
                     summary = "Rin $versionName · 本机记录",
                     onClick = { onOpen(SettingsDestination.About) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsAutomationContent(
-    vm: AppViewModel,
-    settings: AppSettings,
-    settingsPage: SettingsUiState,
-    drafts: SettingsAdvancedDrafts,
-    running: Boolean,
-    stopAt: Instant?,
-    autoServiceConnected: Boolean,
-    signAccessPro: Boolean,
-    onBack: () -> Unit,
-    onMonitorChange: (Boolean) -> Unit,
-    onAutoSignChange: (Boolean) -> Unit,
-    onOpenAccessibility: () -> Unit,
-    onSaveThreshold: (Int) -> Unit
-) {
-    SettingsSubpage(
-        title = if (signAccessPro) "签到自动化" else "签到提醒与名单",
-        subtitle = if (signAccessPro) "监控、安全线和自动模式" else "提醒照常，主动签到未启用",
-        onBack = onBack
-    ) {
-        item(key = "monitor") {
-            AutomationSection(
-                settings = settings,
-                running = running,
-                stopAt = stopAt,
-                autoServiceConnected = autoServiceConnected,
-                signAccessPro = signAccessPro,
-                onMonitorChange = onMonitorChange
-            )
-        }
-        if (signAccessPro) {
-            item(key = "auto-sign") {
-                AutoSignGroup(
-                    settings = settings,
-                    settingsPage = settingsPage,
-                    drafts = drafts,
-                    autoServiceConnected = autoServiceConnected,
-                    onAutoSignChange = onAutoSignChange,
-                    onOpenAccessibility = onOpenAccessibility,
-                    onSaveThreshold = onSaveThreshold,
-                    onLoadThreshold = vm::loadThreshold,
-                    onSaveLocalThreshold = vm::setLocalThreshold
-                )
-            }
-            item(key = "diagnostics") {
-                DiagnosticsGroup(
-                    vm = vm,
-                    autoServiceConnected = autoServiceConnected,
-                    calibration = vm.calibration.collectAsStateWithLifecycle().value
                 )
             }
         }
@@ -1513,21 +1249,7 @@ private fun SettingsAboutContent(vm: AppViewModel, onBack: () -> Unit) {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull().orEmpty().ifBlank { "0.1.1" }
     }
-    var terminalOpen by rememberSaveable { mutableStateOf(false) }
-    var versionTaps by rememberSaveable { mutableIntStateOf(0) }
-    var versionWindowStart by rememberSaveable { mutableStateOf(0L) }
-    fun registerVersionTap() {
-        val now = System.currentTimeMillis()
-        if (now - versionWindowStart > 3000L) {
-            versionTaps = 0
-            versionWindowStart = now
-        }
-        versionTaps++
-        if (versionTaps >= 7) {
-            versionTaps = 0
-            terminalOpen = true
-        }
-    }
+    fun registerVersionTap() { /* the sign terminal does not exist in this build */ }
     SettingsSubpage(
         title = "关于与隐私",
         subtitle = "版本、记录和本机数据",
@@ -1565,13 +1287,6 @@ private fun SettingsAboutContent(vm: AppViewModel, onBack: () -> Unit) {
                 )
             }
         }
-    }
-    if (terminalOpen) {
-        SignAccessTerminal(
-            vm = vm,
-            versionName = versionName,
-            onDismiss = { terminalOpen = false }
-        )
     }
 }
 
@@ -1697,10 +1412,8 @@ private fun signedPercent(value: Float): String {
 @Composable
 private fun SettingsStatusCard(
     session: Pair<String, Boolean>,
-    monitor: Pair<String, Boolean>,
     permission: Pair<String, Boolean>,
     onOpenSession: () -> Unit,
-    onOpenMonitor: () -> Unit,
     onOpenPermissions: () -> Unit
 ) {
     val colors = LocalSuiSignColors.current
@@ -1714,8 +1427,6 @@ private fun SettingsStatusCard(
     ) {
         Text("今日状态", color = colors.textSecondary, style = MaterialTheme.typography.labelMedium)
         SettingsStatusRow("教务会话", session, onOpenSession)
-        Hairline()
-        SettingsStatusRow("后台监控", monitor, onOpenMonitor)
         Hairline()
         SettingsStatusRow("系统权限", permission, onOpenPermissions)
     }
@@ -1809,19 +1520,7 @@ private fun sessionSummary(settings: AppSettings): Pair<String, Boolean> {
     }
 }
 
-private fun monitorSummary(running: Boolean, settings: AppSettings): Pair<String, Boolean> = when {
-    running -> "运行中" to true
-    settings.monitorEnabled -> "已开启" to true
-    else -> "未开启" to false
-}
-
 private fun permissionSummary(ready: Int): Pair<String, Boolean> = "$ready / 3" to (ready == 3)
-
-private fun automationSummary(settings: AppSettings, autoServiceConnected: Boolean): String = when {
-    settings.autoSignEnabled && autoServiceConnected -> "自动模式已开启"
-    settings.monitorEnabled -> "后台监控已开启"
-    else -> "等待开启监控"
-}
 
 private fun appearanceSummary(themeMode: ThemeMode, customThemeActive: Boolean, minimalMode: Boolean): String {
     val theme = if (customThemeActive) "自定义封面" else themeMode.spec.name

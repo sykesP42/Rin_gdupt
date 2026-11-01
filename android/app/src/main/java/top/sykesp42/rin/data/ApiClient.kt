@@ -93,20 +93,6 @@ class ApiClient(
         }
     }
 
-    suspend fun setThreshold(threshold: Int, confirmation: String): Int = withContext(Dispatchers.IO) {
-        val payload = buildJsonObject {
-            put("rosterThreshold", threshold)
-            if (confirmation.isNotBlank()) put("confirmation", confirmation)
-        }
-        val request = requestBuilder("$base/api/v1/sign/settings")
-            .patch(payload.toString().toRequestBody(mediaJson))
-            .build()
-        call(request) { response ->
-            val root = json.parseToJsonElement(response.body?.string().orEmpty()).jsonObject
-            val data = root["data"] as? JsonObject ?: JsonObject(emptyMap())
-            data["rosterThreshold"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: threshold
-        }
-    }
 
     private suspend inline fun <reified T> getData(path: String): T = withContext(Dispatchers.IO) {
         call(requestBuilder("$base$path").get().build()) { response ->

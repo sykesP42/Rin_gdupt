@@ -61,3 +61,13 @@ private fun parseToken(token: String): List<Int> {
 
 private fun String.toSectionOrNull(): Int? =
     toIntOrNull()?.takeIf { it in MIN_SECTION..MAX_SECTION }
+
+/** The campus clock for a section range's first period; blank when unknown. */
+fun sectionStart(text: String): String {
+    val section = parseSections(text).firstOrNull() ?: return ""
+    val starts = arrayOf(
+        "08:00", "08:55", "10:00", "10:55", "14:30", "15:25",
+        "16:20", "17:10", "19:40", "20:35", "21:25", "22:15"
+    )
+    return starts.getOrNull(section - 1).orEmpty()
+}

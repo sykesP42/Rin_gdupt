@@ -364,8 +364,7 @@ internal fun MiniTimetableTableCard(
 internal fun QuickLinksCard(
     settings: AppSettings,
     newsUrl: String,
-    onSchedule: () -> Unit,
-    onSign: () -> Unit
+    onSchedule: () -> Unit
 ) {
     val context = LocalContext.current
     val colors = LocalSuiSignColors.current
@@ -391,10 +390,7 @@ internal fun QuickLinksCard(
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickLink("打开课表", Modifier.weight(1f), onSchedule)
-                QuickLink("去签到", Modifier.weight(1f), onSign)
-            }
+            QuickLink("打开课表", Modifier.weight(1f), onSchedule)
         }
     }
 }

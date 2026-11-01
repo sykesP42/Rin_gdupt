@@ -18,7 +18,7 @@ class SemesterReportTest {
         val report = buildSemesterReport(
             termLabel = "本学期",
             currentWeek = 1,
-            slots = semesterSlots(listOf(course))
+            slots = semesterSlots(emptyList(), manualCourses = listOf(course))
         )
 
         assertEquals("20", report.stats.first { it.label == "学期课次" }.value)
