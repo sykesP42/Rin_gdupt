@@ -131,9 +131,9 @@ internal fun signChatInfo(
             if (counts.isBlank()) "签到进行中，等人数到安全线。" else counts,
             NoticeSlot.CLASS_REMINDER
         )
-        State.BLOCKED_NOT_IN_ROSTER -> info("名单里没有你，先检查名单姓名。", NoticeSlot.ERROR)
-        State.BLOCKED_AMBIGUOUS_NAME -> info("姓名匹配到多人，去签到页确认。", NoticeSlot.ERROR)
-        State.BLOCKED -> info("这节课暂时不能签到，去签到页看看原因。", NoticeSlot.ERROR)
+        State.IDLE -> info("名单里没有你，先检查名单姓名。", NoticeSlot.ERROR)
+        State.IDLE -> info("姓名匹配到多人，去签到页确认。", NoticeSlot.ERROR)
+        State.IDLE -> info("这节课暂时不能签到，去签到页看看原因。", NoticeSlot.ERROR)
         State.READY -> info(
             if (counts.isBlank()) "可以签到了，去签到页看看。" else counts,
             NoticeSlot.READY

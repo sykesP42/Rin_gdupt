@@ -380,9 +380,9 @@ private fun TodayCountdown(
         State.CONFIRMED -> "已确认"
         State.EXPIRED -> "已结束"
         State.IDLE -> if (view.courseName.isNotBlank()) "等待签到" else "等待中"
-        State.BLOCKED_NOT_IN_ROSTER -> "不在名单"
-        State.BLOCKED_AMBIGUOUS_NAME -> "名单同名"
-        State.BLOCKED -> "暂不可用"
+        State.IDLE -> "不在名单"
+        State.IDLE -> "名单同名"
+        State.IDLE -> "暂不可用"
     }
     val textSize = when {
         !active && text.length > 3 -> 34.sp
@@ -524,9 +524,9 @@ private fun heroHint(view: MonitorView, monitorEnabled: Boolean, ready: Boolean)
     !monitorEnabled -> "到点才检查 · 默认只提醒"
     view.state == State.WAITING_THRESHOLD -> "未到安全线，只提醒"
     view.state == State.CONFIRMED -> "名单已确认，不用再操作。"
-    view.state == State.BLOCKED_NOT_IN_ROSTER -> "名单里没你，去核对姓名"
-    view.state == State.BLOCKED_AMBIGUOUS_NAME -> "名单里有同名，去网页端确认身份。"
-    view.state == State.BLOCKED -> "签到状态没读到，稍后重试。"
+    view.state == State.IDLE -> "名单里没你，去核对姓名"
+    view.state == State.IDLE -> "名单里有同名，去网页端确认身份。"
+    view.state == State.IDLE -> "签到状态没读到，稍后重试。"
     view.state == State.EXPIRED -> "这次签到已结束，等下一节。"
     view.state == State.IDLE -> idleHint(view.recommendationStatus, view.courseName)
     else -> "只读自己的账号"
@@ -888,8 +888,8 @@ internal fun TodayDetailsSheet(
                 State.EXPIRED -> "签到已结束"
                 State.CONFIRMED -> "本次已确认"
                 State.IDLE -> idleHeadline(view.recommendationStatus, view.courseName)
-                State.BLOCKED_NOT_IN_ROSTER, State.BLOCKED_AMBIGUOUS_NAME -> "签到已开始"
-                State.BLOCKED -> "状态没读到"
+                State.IDLE, State.IDLE -> "签到已开始"
+                State.IDLE -> "状态没读到"
             },
             body = when (view.state) {
                 State.READY, State.WAITING_THRESHOLD ->
@@ -897,9 +897,9 @@ internal fun TodayDetailsSheet(
                 State.NOT_STARTED ->
                     "预计 ${formatClock(view.effectiveSignEndAt ?: serverNow)} 结束"
                 State.IDLE -> idleHint(view.recommendationStatus, view.courseName)
-                State.BLOCKED_NOT_IN_ROSTER, State.BLOCKED_AMBIGUOUS_NAME ->
+                State.IDLE, State.IDLE ->
                     "校园时间 ${formatClock(serverNow)}"
-                State.BLOCKED -> "稍后重试，或去网页端看看"
+                State.IDLE -> "稍后重试，或去网页端看看"
                 else -> "校园时间 ${formatClock(serverNow)}"
             }
         )
@@ -938,14 +938,14 @@ internal fun TodayDetailsSheet(
             icon = Icons.Filled.Lock,
             title = when (view.state) {
                 State.CONFIRMED -> "名单已确认本人签到"
-                State.BLOCKED_NOT_IN_ROSTER -> "本人不在本次名单"
-                State.BLOCKED_AMBIGUOUS_NAME -> "名单有同名，需人工确认"
+                State.IDLE -> "本人不在本次名单"
+                State.IDLE -> "名单有同名，需人工确认"
                 else -> "最后一步在微信完成"
             },
             body = when (view.state) {
                 State.CONFIRMED -> "名单已确认本人"
-                State.BLOCKED_NOT_IN_ROSTER -> "名单里没有你"
-                State.BLOCKED_AMBIGUOUS_NAME -> "去网页端确认身份"
+                State.IDLE -> "名单里没有你"
+                State.IDLE -> "去网页端确认身份"
                 else -> "扫码后名单会自动更新"
             }
         )

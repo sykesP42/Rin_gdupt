@@ -191,9 +191,9 @@ fun statusLabel(state: State): String = when (state) {
     State.WAITING_THRESHOLD -> "等待人数达标"
     State.READY -> "可以签到"
     State.EXPIRED -> "签到已结束"
-    State.BLOCKED_NOT_IN_ROSTER -> "不在本次名单"
-    State.BLOCKED_AMBIGUOUS_NAME -> "名单有同名"
-    State.BLOCKED -> "暂不可用"
+    State.IDLE -> "不在本次名单"
+    State.IDLE -> "名单有同名"
+    State.IDLE -> "暂不可用"
     State.CONFIRMED -> "已确认签到"
 }
 
@@ -202,8 +202,8 @@ fun statusAccent(state: State): Color {
     val colors = LocalSuiSignColors.current
     return when (state) {
         State.READY, State.CONFIRMED -> colors.signal
-        State.WAITING_THRESHOLD, State.BLOCKED, State.BLOCKED_NOT_IN_ROSTER,
-        State.BLOCKED_AMBIGUOUS_NAME -> colors.warning
+        State.WAITING_THRESHOLD, State.IDLE, State.IDLE,
+        State.IDLE -> colors.warning
         State.IDLE, State.NOT_STARTED, State.EXPIRED -> colors.textSecondary
     }
 }
