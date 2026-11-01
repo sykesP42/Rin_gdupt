@@ -47,10 +47,6 @@ class JwxtLoginActivity : Activity() {
     private var verifying = false
     /** Direct JWXT failed once; the WebVPN portal took over. */
     private var fellBackToWebVpn = false
-    // The portal renders "教务系统H5" as a plain tile; after the portal login
-    // completes we open it once so the user lands on JWXT directly instead of
-    // having to find the tile themselves.
-    private var autoOpenedJwxt = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,7 +84,6 @@ class JwxtLoginActivity : Activity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 refreshConnectState(url)
-                maybeOpenJwxt(view, url)
             }
 
             override fun onReceivedError(
@@ -167,40 +162,6 @@ class JwxtLoginActivity : Activity() {
     private fun refreshConnectState(url: String) {
         val header = CookieManager.getInstance().getCookie(url).orEmpty()
         connectButton.isEnabled = header.isNotBlank()
-    }
-
-    /**
-     * Portal login just finished: open the 教务 tile automatically, inside a
-     * WebVPN-wrapped session. The portal is a single-page app, so the tile may
-     * not exist yet when onPageFinished fires — retry a few times before
-     * giving up. Silent no-op otherwise; the user can still tap it manually.
-     */
-    private fun maybeOpenJwxt(view: WebView, url: String) {
-        val lower = url.lowercase()
-        if (!lower.contains("webvpn")) return
-        if (lower.contains("login") || lower.contains("authserver")) return
-        if (lower.contains("jwxt") || lower.contains("jwgl")) return
-        if (autoOpenedJwxt) return
-        autoOpenedJwxt = true
-        tryClickJwxt(view, attempt = 0)
-    }
-
-    private fun tryClickJwxt(view: WebView, attempt: Int) {
-        if (isFinishing) return
-        view.evaluateJavascript(DEBUG_LINKS_JS) { links ->
-            android.util.Log.i(TAG, "portal links attempt=$attempt -> $links")
-        }
-        view.evaluateJavascript(CLICK_JWXT_JS) { result ->
-            android.util.Log.i(TAG, "auto-open jwxt attempt=$attempt result=$result")
-            val clicked = result?.contains("true") == true
-            if (!clicked) {
-                if (attempt < JWXT_CLICK_RETRIES) {
-                    view.postDelayed({ tryClickJwxt(view, attempt + 1) }, 1200L)
-                } else {
-                    autoOpenedJwxt = false
-                }
-            }
-        }
     }
 
     /**
@@ -296,60 +257,9 @@ class JwxtLoginActivity : Activity() {
 
         private const val DEFAULT_BASE = "https://jwxt.gdupt.edu.cn"
         private const val WEBVPN_ENTRY = "https://webvpn2.gdupt.edu.cn"
-
-        /**
-         * Finds the portal's 教务 tile whether it is an anchor or a clickable
-         * div, then clicks it (bubbling up a few levels because SPA tiles put
-         * the handler on an ancestor). Returns "true" when something was
-         * clicked.
-         */
-        private const val CLICK_JWXT_JS = """
-            (function () {
-              try {
-                var all = Array.prototype.slice.call(document.querySelectorAll('a,div,li,span,p'));
-                var hit = null;
-                for (var i = 0; i < all.length; i++) {
-                  var el = all[i];
-                  var text = (el.innerText || '').trim();
-                  if (!text || text.length > 24) continue;
-                  if (text.indexOf('教务') < 0) continue;
-                  hit = el;
-                  if (el.tagName === 'A') break;
-                }
-                if (!hit) return 'false';
-                var a = hit.closest ? hit.closest('a') : null;
-                if (a && a.href) { location.href = a.href; return 'true'; }
-                var node = hit;
-                for (var d = 0; d < 4 && node; d++) { node.click(); node = node.parentElement; }
-                return 'true';
-              } catch (e) { return 'false'; }
-            })()
-        """
-
-        private const val TAG = "RinJwxt"
-        private const val JWXT_CLICK_RETRIES = 5
-
-        /** Debug helper: what does the portal actually link the 教务 tile to? */
-        private const val DEBUG_LINKS_JS = """
-            (function () {
-              try {
-                var out = [];
-                var links = document.querySelectorAll('a');
-                for (var i = 0; i < links.length && out.length < 5; i++) {
-                  var href = links[i].href || '';
-                  if (href.indexOf('/https/') < 0) continue;
-                  var text = (links[i].innerText || '').trim().replace(/\s+/g, ' ');
-                  out.push(text.slice(0, 14) + ' => ' + href.slice(0, 120));
-                }
-                return out.join(' || ') || 'none';
-              } catch (e) { return 'err'; }
-            })()
-        """
-
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Rin/1.0"
 
-        // Rin dark tokens (ui/theme), duplicated so this plain Activity needs no Compose.
         private val COLOR_CANVAS = 0xFF0B0E11.toInt()
         private val COLOR_SURFACE = 0xFF11161A.toInt()
         private val COLOR_SURFACE_RAISED = 0xFF181E23.toInt()
