@@ -145,6 +145,9 @@ fun ScheduleScreen(
     initialSegment: Int = 1,
     onBack: (() -> Unit)? = null,
     onOpenProfile: () -> Unit = {},
+    // Mini 卡直达入口："week"/"table" 打开对应周视图，空串保持默认日视图。
+    // 值带时间戳 nonce（"week#<millis>"），连续点同一张卡也能再次生效。
+    initialEntry: String = "",
 ) {
     val context = LocalContext.current
     val schedule by vm.schedule.collectAsStateWithLifecycle()
@@ -192,6 +195,19 @@ fun ScheduleScreen(
     var openedCourseEvent by remember { mutableStateOf<ApiScheduleEvent?>(null) }
     var baseWeek by rememberSaveable { mutableIntStateOf(0) }
     var dayFocus by rememberSaveable { mutableIntStateOf(0) }
+
+    LaunchedEffect(initialEntry) {
+        when (initialEntry.substringBefore('#')) {
+            "week" -> {
+                tableMode = false
+                if (settings?.weekDefaultFullscreen == true) fullscreenWeek = true else weekView = true
+            }
+            "table" -> {
+                tableMode = true
+                if (settings?.weekDefaultFullscreen == true) fullscreenWeek = true else weekView = true
+            }
+        }
+    }
 
     LaunchedEffect(segment) {
         when (segment) {

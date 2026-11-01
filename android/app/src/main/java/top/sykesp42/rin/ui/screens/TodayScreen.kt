@@ -131,7 +131,7 @@ fun TodayScreen(
     themeMode: ThemeMode,
     avatarText: String,
     onToggleTheme: () -> Unit,
-    onOpenSchedule: () -> Unit,
+    onOpenSchedule: (String) -> Unit,
     minimal: Boolean = false,
     signOnly: Boolean = false,
     onOpenHistory: (() -> Unit)? = null,
@@ -587,7 +587,7 @@ fun TodayScreen(
                                     line = companion,
                                     onAction = { action ->
                                         when (action) {
-                                            CompanionAction.SCHEDULE -> onOpenSchedule()
+                                            CompanionAction.SCHEDULE -> onOpenSchedule("")
                                             CompanionAction.SIGN -> onOpenSign()
                                             CompanionAction.NEWS -> if (latestNewsUrl.isNotBlank()) {
                                                 runCatching {
@@ -690,7 +690,7 @@ fun TodayScreen(
                                 QuickLinksCard(
                                     settings = appSettings,
                                     newsUrl = latestNewsUrl,
-                                    onSchedule = onOpenSchedule,
+                                    onSchedule = { onOpenSchedule("") },
                                     onSign = onOpenSign
                                 )
                             }
@@ -698,17 +698,17 @@ fun TodayScreen(
                                 FileHubCard(onMessage = vm::notify)
                             }
                             TodayCardId.MINI_DAY -> item(key = "card-mini-day") {
-                                MiniTimetableDayCard(overview, todayDate, onOpenSchedule)
+                                MiniTimetableDayCard(overview, todayDate) { onOpenSchedule("") }
                             }
                             TodayCardId.MINI_WEEK -> item(key = "card-mini-week") {
-                                MiniTimetableWeekCard(overview, onOpenSchedule)
+                                MiniTimetableWeekCard(overview) { onOpenSchedule("week") }
                             }
                             TodayCardId.MINI_TABLE -> item(key = "card-mini-table") {
                                 MiniTimetableTableCard(
                                     overview = overview,
                                     today = todayDate,
                                     nowMinutes = schoolNowMinutes,
-                                    onOpen = onOpenSchedule
+                                    onOpen = { onOpenSchedule("table") }
                                 )
                             }
                             TodayCardId.RIN_SHOWCASE -> item(key = "card-showcase") {
@@ -991,7 +991,7 @@ fun TodayScreen(
                 lastCheckedAt = lastCheckedAt,
                 onDismiss = { detailsOpen = false },
                 onClearManual = vm::clearManualCode,
-                onOpenSchedule = onOpenSchedule
+                onOpenSchedule = { onOpenSchedule("") }
             )
         }
     }
@@ -1068,7 +1068,7 @@ fun TodayScreen(
             onOpenFreeRooms = { _, _ ->
                 openedCourseEvent = null
                 vm.dismissCourseDetail()
-                onOpenSchedule()
+                onOpenSchedule("")
             },
             checklist = grades.courseDetail.checklist,
             onSaveChecklist = vm::saveChecklist,

@@ -176,6 +176,9 @@ private fun MainScaffold(
         mutableStateOf(if (settings.minimalMode) MainNavigation.homeTab(true) else initialTab)
     }
     var historyOpen by rememberSaveable { mutableStateOf(false) }
+    // Mini 卡入口要求课表页落在指定视图（week/table）；带时间戳 nonce 保证
+    // 连续点同一张卡也能再次触发。
+    var scheduleEntry by remember { mutableStateOf("") }
     var campusSection by rememberSaveable { mutableStateOf<Int?>(null) }
     var themePickerOpen by rememberSaveable { mutableStateOf(false) }
     var profileSignal by rememberSaveable { mutableIntStateOf(0) }
@@ -283,7 +286,10 @@ private fun MainScaffold(
                         themeMode = themeMode,
                         avatarText = displayName,
                         onToggleTheme = openThemePicker,
-                        onOpenSchedule = { selectTab(MainTab.SCHEDULE) },
+                        onOpenSchedule = { entry ->
+                            scheduleEntry = entry
+                            selectTab(MainTab.SCHEDULE)
+                        },
                         onOpenSign = { selectTab(MainTab.SIGN) },
                         minimal = settings.minimalMode
                     )
@@ -293,7 +299,8 @@ private fun MainScaffold(
                         avatarText = displayName,
                         onToggleTheme = openThemePicker,
                         onGoToday = { selectTab(MainTab.TODAY) },
-                        onOpenProfile = { selectTab(MainTab.ME); profileSignal++ }
+                        onOpenProfile = { selectTab(MainTab.ME); profileSignal++ },
+                        initialEntry = scheduleEntry
                     )
                     MainTab.SIGN -> if (showingHistory) {
                         HistoryScreen(
@@ -309,7 +316,10 @@ private fun MainScaffold(
                             themeMode = themeMode,
                             avatarText = displayName,
                             onToggleTheme = openThemePicker,
-                            onOpenSchedule = { selectTab(MainTab.SCHEDULE) },
+                            onOpenSchedule = { entry ->
+                            scheduleEntry = entry
+                            selectTab(MainTab.SCHEDULE)
+                        },
                             signOnly = true,
                             onOpenHistory = {
                                 vm.loadHistory()
@@ -338,7 +348,10 @@ private fun MainScaffold(
                                 avatarText = displayName,
                                 onToggleTheme = openThemePicker,
                                 onOpenToday = { selectTab(MainTab.TODAY) },
-                                onOpenSchedule = { selectTab(MainTab.SCHEDULE) },
+                                onOpenSchedule = {
+                                    scheduleEntry = ""
+                                    selectTab(MainTab.SCHEDULE)
+                                },
                                 onOpenAcademic = { campusSection = it }
                             )
                         }
