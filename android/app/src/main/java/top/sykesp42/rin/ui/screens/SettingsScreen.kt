@@ -49,6 +49,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -100,6 +101,8 @@ import top.sykesp42.rin.ui.components.CornerStyleRow
 import top.sykesp42.rin.ui.components.CustomThemeFocusRow
 import top.sykesp42.rin.ui.components.CustomThemePaletteRow
 import top.sykesp42.rin.ui.components.DataBand
+import top.sykesp42.rin.ui.components.SuiPrimaryButton
+import top.sykesp42.rin.ui.components.suiTextFieldColors
 import top.sykesp42.rin.ui.components.Hairline
 import top.sykesp42.rin.ui.components.PaperPage
 import top.sykesp42.rin.ui.components.PermissionRow
@@ -1508,6 +1511,9 @@ private fun SettingsConnectionContent(
                 }
             }
         }
+        item(key = "cloud-fallback") {
+            CloudFallbackGroup(vm = vm, drafts = drafts)
+        }
         item(key = "manual-reset") {
             Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
                 SectionHeader(title = "手动数据")
@@ -1524,6 +1530,77 @@ private fun SettingsConnectionContent(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CloudFallbackGroup(vm: AppViewModel, drafts: SettingsAdvancedDrafts) {
+    val colors = LocalSuiSignColors.current
+    val loginState by vm.login.collectAsStateWithLifecycle()
+    var wasBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(loginState) {
+        if (wasBusy && !loginState.busy && loginState.error.isBlank()) {
+            vm.notify("云端保底已登录")
+            drafts.cloudPass = ""
+        }
+        wasBusy = loginState.busy
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        SectionHeader(title = "云端保底", meta = if (loginState.busy) "登录中…" else "")
+        Text(
+            text = "本地连不上学校时自动走云端取签到码，登录一次即可。",
+            color = colors.textSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
+        OutlinedTextField(
+            value = drafts.cloudUrl,
+            onValueChange = { drafts.cloudUrl = it },
+            label = { Text("服务地址") },
+            placeholder = { Text("https://signup.sky2333.top") },
+            singleLine = true,
+            colors = suiTextFieldColors(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = drafts.cloudUser,
+            onValueChange = { drafts.cloudUser = it },
+            label = { Text("账号") },
+            singleLine = true,
+            colors = suiTextFieldColors(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = drafts.cloudPass,
+            onValueChange = { drafts.cloudPass = it },
+            label = { Text("密码") },
+            singleLine = true,
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            colors = suiTextFieldColors(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (loginState.error.isNotBlank()) {
+            Text(
+                text = loginState.error,
+                color = colors.warning,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        SuiPrimaryButton(
+            text = "登录云端",
+            onClick = {
+                vm.login(
+                    serverUrl = drafts.cloudUrl.ifBlank { "https://signup.sky2333.top" },
+                    username = drafts.cloudUser,
+                    password = drafts.cloudPass
+                )
+            },
+            enabled = !loginState.busy && drafts.cloudUser.isNotBlank() && drafts.cloudPass.isNotEmpty(),
+            loading = loginState.busy,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

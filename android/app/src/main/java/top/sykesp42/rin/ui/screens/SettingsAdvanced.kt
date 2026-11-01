@@ -70,6 +70,9 @@ class SettingsAdvancedDrafts {
     var rosterName by mutableStateOf("")
     var jwxtAccount by mutableStateOf("")
     var jwxtPassword by mutableStateOf("")
+    var cloudUrl by mutableStateOf("")
+    var cloudUser by mutableStateOf("")
+    var cloudPass by mutableStateOf("")
 }
 
 @Composable
