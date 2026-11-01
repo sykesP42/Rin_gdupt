@@ -658,6 +658,22 @@ fun WeekTableCanvas(
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
+    // Ten 72dp rows are taller than a whole phone page, so a fixed row height
+    // always ended in fit-scale shrinking the grid back into the corner. Size
+    // the rows to the measured viewport instead: the table then fills the page
+    // at scale 1 — same behaviour the fixed height only produced on tablets.
+    val density = LocalDensity.current
+    val effectiveRowHeight = remember(viewport, rowHeight) {
+        if (viewport.height <= 0) {
+            rowHeight
+        } else {
+            val viewportDp = with(density) { viewport.height.toDp() }
+            // WeekHeader + trailing spacer above and below the section rows.
+            val available = viewportDp - 64.dp - 18.dp
+            maxOf(44.dp, minOf(rowHeight, available / SECTIONS))
+        }
+    }
+
     val fit = remember(contentSize, viewport) {
         computeCanvasFitScale(
             contentSize.width.toFloat(), contentSize.height.toFloat(),
@@ -818,7 +834,7 @@ fun WeekTableCanvas(
                     today = today,
                     nowMinutes = nowMinutes,
                     onCourseTap = onCourseTap,
-                    rowHeight = rowHeight,
+                    rowHeight = effectiveRowHeight,
                     canvasMode = true,
                     // Recorded before the transform, so a share always shows the
                     // whole week at fit instead of whichever corner was zoomed.

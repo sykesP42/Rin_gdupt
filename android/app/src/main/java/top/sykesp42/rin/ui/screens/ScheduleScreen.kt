@@ -1,53 +1,59 @@
 package top.sykesp42.rin.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import java.time.LocalDate
 import top.sykesp42.rin.data.ApiScheduleEvent
 import top.sykesp42.rin.data.AppSettings
-import top.sykesp42.rin.data.ManualPayload
 import top.sykesp42.rin.data.buildWeekOverview
 import top.sykesp42.rin.ui.AppViewModel
 import top.sykesp42.rin.ui.Identity
+import top.sykesp42.rin.ui.components.EmptyState
 import top.sykesp42.rin.ui.components.PaperPage
 import top.sykesp42.rin.ui.components.RinMasthead
 import top.sykesp42.rin.ui.components.SuiSecondaryButton
 import top.sykesp42.rin.ui.formatDateLine
 import top.sykesp42.rin.ui.schedule.ExportPalette
 import top.sykesp42.rin.ui.schedule.ShareFormat
-import top.sykesp42.rin.ui.schedule.ShareStyle
 import top.sykesp42.rin.ui.schedule.buildSemesterReport
-import top.sykesp42.rin.ui.schedule.coursesOnDate
 import top.sykesp42.rin.ui.schedule.nowMinutesAt
-import top.sykesp42.rin.ui.schedule.weekNumberFor
 import top.sykesp42.rin.ui.schedule.semesterSlots
+import top.sykesp42.rin.ui.schedule.shouldShowReturnToCurrent
 import top.sykesp42.rin.ui.schedule.todayAtCampusClock
 import top.sykesp42.rin.ui.theme.LocalRinColors
 import top.sykesp42.rin.ui.theme.LocalVisualStyle
 import top.sykesp42.rin.ui.theme.ThemeMode
 
+/**
+ * 课表, laid out the way the full client does it: day-first, one LazyColumn, a
+ * week navigation row with 日 / 周 / 表 / 学期 entries, and a whole-page week
+ * layer for 周 / 表. The full client keeps the timetable free of permanent
+ * action buttons — manual data and the semester report hang off the same row —
+ * and this build follows that.
+ */
 @Composable
 fun ScheduleScreen(
     vm: AppViewModel,
@@ -70,19 +76,17 @@ fun ScheduleScreen(
         ?: buildWeekOverview(manual, appSettings, 0, today, nowMinutes)
     var manualOpen by remember { mutableStateOf(false) }
     var reportOpen by remember { mutableStateOf(false) }
-    var tableMode by remember { mutableStateOf(appSettings.weekDefaultTable) }
-    var fullscreen by remember { mutableStateOf(appSettings.weekDefaultFullscreen) }
-    var viewMode by remember { mutableStateOf(ScheduleViewMode.WEEK) }
-    var selectedDate by remember { mutableStateOf(today) }
-    val report = remember(manual, overview.week) {
-        buildSemesterReport(
-            termLabel = "本学期",
-            currentWeek = overview.week.coerceAtLeast(1),
-            slots = semesterSlots(manual.courses),
-            examCount = manual.exams.size,
-            todoCount = manual.todos.count { !it.done }
-        )
-    }
+    var termView by rememberSaveable { mutableStateOf(false) }
+    // The whole-page 周 / 表 layer. It renders without the page header, the
+    // way the full client does — squeezing the 72dp-row grid into the strip
+    // under the header forced fit-scale to ~0.7 and crushed the cells.
+    var weekOpen by rememberSaveable { mutableStateOf(false) }
+    var tableMode by rememberSaveable { mutableStateOf(appSettings.weekDefaultTable) }
+    // Day focus inside the loaded week; a step past the edge also switches the
+    // loaded week (the full client does the same one-week spill).
+    var dayFocus by rememberSaveable { mutableIntStateOf(initialDayFocus(overview)) }
+
+    val pageInset = if (LocalConfiguration.current.screenWidthDp < 360) 20.dp else 24.dp
     val shareStyle = Identity.shareStyle(appSettings)
     val shareFormat = ShareFormat.entries.firstOrNull {
         it.name.equals(appSettings.shareFormat, ignoreCase = true)
@@ -106,246 +110,223 @@ fun ScheduleScreen(
         append(" 门课")
     }
 
+    // Day paging: a horizontal drag anywhere over the day view steps one day.
+    val step = rememberUpdatedState { weekday: Int, delta: Int ->
+        val (nextWeekday, weekOffset) = stepDay(weekday, delta)
+        dayFocus = nextWeekday
+        if (weekOffset != 0) vm.switchWeek(weekOffset)
+    }
+
+    BackHandler(enabled = weekOpen) {
+        weekOpen = false
+        tableMode = false
+    }
+
     PaperPage(ambientSpec = themeMode.spec) {
-        Column(Modifier.fillMaxSize()) {
-            RinMasthead(
-                dateLine = dateLine,
-                title = "课表",
-                avatarText = avatarText,
-                onRefresh = vm::refreshSchedule,
-                onTheme = onToggleTheme,
-                compact = true
+        if (weekOpen && hasScheduleData(overview)) {
+            ScheduleWeekView(
+                overview = overview,
+                onCourseTap = { event -> vm.openCourseDetail(event) },
+                onClose = {
+                    weekOpen = false
+                    tableMode = false
+                },
+                onSwipeWeek = { delta -> vm.switchWeek(delta) },
+                fullscreen = true,
+                onFullscreen = null,
+                tableMode = tableMode,
+                onToggleTableMode = { tableMode = !tableMode },
+                currentWeek = schedule.currentWeek,
+                onBackToCurrentWeek = vm::backToCurrentWeek,
+                shareOwner = owner,
+                shareStyle = shareStyle,
+                appVersion = vm.appVersion,
+                onShareStyleChange = { vm.setShareStyle(it.name.lowercase()) },
+                shareFormat = shareFormat,
+                onShareFormatChange = { vm.setShareFormat(it.name.lowercase()) },
+                modifier = Modifier.fillMaxSize()
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 0.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                ViewModeTab("周", viewMode == ScheduleViewMode.WEEK) {
-                    viewMode = ScheduleViewMode.WEEK
-                }
-                ViewModeTab("日", viewMode == ScheduleViewMode.DAY) {
-                    selectedDate = today
-                    viewMode = ScheduleViewMode.DAY
-                }
-                if (!appSettings.simpleMode) {
-                    ViewModeTab("月", viewMode == ScheduleViewMode.MONTH) {
-                        viewMode = ScheduleViewMode.MONTH
-                    }
-                }
-            }
-            if (viewMode == ScheduleViewMode.WEEK) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SuiSecondaryButton(
-                    text = if (manual.isEmpty) "添加课程" else "手动数据",
-                    onClick = { manualOpen = true }
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                RinMasthead(
+                    dateLine = dateLine,
+                    title = "课表",
+                    avatarText = avatarText,
+                    onRefresh = vm::refreshSchedule,
+                    onTheme = onToggleTheme,
+                    compact = true
                 )
-                SuiSecondaryButton(
-                    text = "学期报告",
-                    onClick = { reportOpen = true },
-                    enabled = manual.courses.isNotEmpty()
-                )
-                if (overview.week != schedule.currentWeek && schedule.currentWeek > 0) {
-                    TextButton(onClick = vm::backToCurrentWeek) {
-                        Text("回到本周", color = colors.signal, style = MaterialTheme.typography.labelMedium)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            var accum = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { accum = 0f },
+                                onHorizontalDrag = { change, amount ->
+                                    accum += amount
+                                    change.consume()
+                                },
+                                onDragEnd = {
+                                    if (accum < -140f) step.value(dayFocus, 1)
+                                    else if (accum > 140f) step.value(dayFocus, -1)
+                                }
+                            )
+                        },
+                    contentPadding = PaddingValues(
+                        start = pageInset,
+                        end = pageInset,
+                        top = 4.dp,
+                        bottom = 92.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                ) {
+                    if (schedule.warning != null) {
+                        item(key = "schedule-warning") {
+                            ScheduleErrorRow(
+                                message = schedule.warning.orEmpty(),
+                                onRetry = vm::refreshSchedule,
+                                actionLabel = "重试"
+                            )
+                        }
                     }
-                }
-            }
-            }
-            if (!appSettings.simpleMode) {
-                schedule.warning?.let { warning ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = warning,
-                            color = colors.textSecondary,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = onOpenSettings) {
-                            Text(
-                                "去连接",
-                                color = colors.signal,
-                                style = MaterialTheme.typography.labelMedium
+                    if (!hasScheduleData(overview)) {
+                        item(key = "schedule-empty") {
+                            if (schedule.loading) {
+                                ScheduleLoadingSurface()
+                            } else {
+                                EmptyState(
+                                    title = "课表还是空的",
+                                    body = "连上教务后自动读取；之前看过的课表会留一份在本机。"
+                                )
+                            }
+                        }
+                    } else {
+                        item(key = "week-nav") {
+                            WeekNavigation(
+                                week = overview.week,
+                                termView = termView,
+                                showReturn = shouldShowReturnToCurrent(
+                                    overview.week,
+                                    schedule.currentWeek
+                                ),
+                                showWeekAction = hasScheduleData(overview),
+                                onPrev = { step.value(dayFocus, -1) },
+                                onNext = { step.value(dayFocus, 1) },
+                                onReturn = vm::backToCurrentWeek,
+                                onToggleTerm = {
+                                    termView = !termView
+                                    if (termView) vm.ensureTermCourses()
+                                },
+                                onOpenWeek = {
+                                    tableMode = false
+                                    weekOpen = true
+                                },
+                                onOpenTable = {
+                                    tableMode = true
+                                    weekOpen = true
+                                }
+                            )
+                        }
+                        if (termView) {
+                            item(key = "term-actions") {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    SuiSecondaryButton(
+                                        text = "手动数据",
+                                        onClick = { manualOpen = true },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                            item(key = "term-overview") {
+                                TermOverview(
+                                    courses = academic.termCourses,
+                                    loading = academic.termCoursesLoading,
+                                    currentWeek = overview.week,
+                                    onOpen = { name ->
+                                        val slot = academic.termCourses
+                                            .firstOrNull { it.courseName == name }
+                                            ?.slots?.firstOrNull()
+                                            ?: return@TermOverview
+                                        vm.openCourseDetail(
+                                            ApiScheduleEvent(
+                                                courseName = slot.courseName,
+                                                location = slot.location,
+                                                sectionText = slot.sectionText
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+                        } else {
+                            item(key = "day-view") {
+                                ScheduleDayView(
+                                    overview = overview,
+                                    pickedWeekday = dayFocus,
+                                    onWeekdayPick = { dayFocus = it },
+                                    onCourseTap = { event -> vm.openCourseDetail(event) }
+                                )
+                            }
+                        }
+                        item(key = "schedule-foot") {
+                            ScheduleFoot(
+                                fromCache = schedule.fromCache,
+                                cachedAt = schedule.cachedAt,
+                                needsLogin = schedule.warning != null
                             )
                         }
                     }
                 }
             }
-            if (viewMode == ScheduleViewMode.DAY) {
-                // The loaded overview only carries its own week. For a day
-                // outside it, derive that day's classes from the term courses
-                // so the day view stays useful across the whole month.
-                val dayViewDays = if (
-                    overview.days.any { it.date == selectedDate.toString() } ||
-                    academic.termCourses.isEmpty()
-                ) {
-                    overview.days
-                } else {
-                    val week = weekNumberFor(selectedDate, schedule.currentWeek, today)
-                    val events = coursesOnDate(
-                        academic.termCourses,
-                        selectedDate.dayOfWeek.value,
-                        week
-                    ).map { course ->
-                        ApiScheduleEvent(
-                            courseName = course.courseName,
-                            location = course.location,
-                            sectionText = course.sectionText
-                        )
-                    }
-                    overview.days + top.sykesp42.rin.data.ApiScheduleDay(
-                        date = selectedDate.toString(),
-                        weekday = selectedDate.dayOfWeek.value,
-                        events = events
-                    )
-                }
-                DayScheduleView(
-                    days = dayViewDays,
-                    selectedDate = selectedDate,
-                    today = today,
-                    mark = "",
-                    onSelectDate = { selectedDate = it },
-                    onBack = { viewMode = ScheduleViewMode.WEEK },
-                    onToday = { selectedDate = today },
-                    onCourseTap = { event -> vm.openCourseDetail(event) }
-                )
-            } else if (viewMode == ScheduleViewMode.MONTH) {
-                LaunchedEffect(Unit) { vm.ensureTermCourses() }
-                MonthScheduleView(
-                    payload = manual,
-                    settings = appSettings,
-                    today = today,
-                    onBack = { viewMode = ScheduleViewMode.WEEK },
-                    onPickDate = { date ->
-                        selectedDate = date
-                        viewMode = ScheduleViewMode.DAY
-                    },
-                    jwxt = schedule.overview,
-                    termCourses = academic.termCourses,
-                    currentWeek = schedule.currentWeek
-                )
-            } else {
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                ScheduleWeekView(
-                    overview = overview,
-                    onCourseTap = { event -> vm.openCourseDetail(event) },
-                    onClose = onGoToday,
-                    onSwipeWeek = { delta -> vm.switchWeek(delta) },
-                    emptyContent = if (overview.days.all { it.events.isEmpty() }) {
-                        {
-                            EmptySchedule(onAdd = { manualOpen = true })
-                        }
-                    } else {
-                        null
-                    },
-                    fullscreen = fullscreen,
-                    onFullscreen = { fullscreen = !fullscreen },
-                    tableMode = tableMode,
-                    onToggleTableMode = { tableMode = !tableMode },
-                    currentWeek = schedule.currentWeek,
-                    onBackToCurrentWeek = vm::backToCurrentWeek,
-                    shareOwner = owner,
-                    shareStyle = shareStyle,
-                    appVersion = vm.appVersion,
-                    onShareStyleChange = { vm.setShareStyle(it.name.lowercase()) },
-                    shareFormat = shareFormat,
-                    onShareFormatChange = { vm.setShareFormat(it.name.lowercase()) }
-                )
-            }
-            }
         }
-    }
-
-    if (manualOpen) {
-        ManualDataSheet(
-            payload = manual,
-            existingNames = emptySet(),
-            onAddCourse = vm::addManualCourse,
-            onRemoveCourse = vm::removeManualCourse,
-            onAddExam = vm::addManualExam,
-            onRemoveExam = vm::removeManualExam,
-            onAddTodo = vm::addManualTodo,
-            onToggleTodo = vm::toggleManualTodo,
-            onRemoveTodo = vm::removeManualTodo,
-            onAddMove = vm::addManualMove,
-            onRemoveMove = vm::removeManualMove,
-            onDismiss = { manualOpen = false }
-        )
-    }
-    if (reportOpen) {
-        SemesterReportSheet(
-            report = report,
-            palette = palette,
-            shareStyle = shareStyle,
-            shareOwner = owner,
-            appVersion = vm.appVersion,
-            onDismiss = { reportOpen = false }
-        )
-    }
-    if (detail.open) {
-        CourseDetailSheet(
-            vm = vm,
-            detail = detail,
-            onDismiss = vm::dismissCourseDetail
-        )
+        if (manualOpen) {
+            ManualDataSheet(
+                payload = manual,
+                existingNames = emptySet(),
+                onAddCourse = vm::addManualCourse,
+                onRemoveCourse = vm::removeManualCourse,
+                onAddExam = vm::addManualExam,
+                onRemoveExam = vm::removeManualExam,
+                onAddTodo = vm::addManualTodo,
+                onToggleTodo = vm::toggleManualTodo,
+                onRemoveTodo = vm::removeManualTodo,
+                onAddMove = vm::addManualMove,
+                onRemoveMove = vm::removeManualMove,
+                onDismiss = { manualOpen = false }
+            )
+        }
+        if (reportOpen) {
+            val report = remember(manual, overview.week) {
+                buildSemesterReport(
+                    termLabel = "本学期",
+                    currentWeek = overview.week.coerceAtLeast(1),
+                    slots = semesterSlots(manual.courses),
+                    examCount = manual.exams.size,
+                    todoCount = manual.todos.count { !it.done }
+                )
+            }
+            SemesterReportSheet(
+                report = report,
+                palette = palette,
+                shareStyle = shareStyle,
+                shareOwner = owner,
+                appVersion = vm.appVersion,
+                onDismiss = { reportOpen = false }
+            )
+        }
+        if (detail.open) {
+            CourseDetailSheet(
+                vm = vm,
+                detail = detail,
+                onDismiss = vm::dismissCourseDetail
+            )
+        }
     }
 }
 
 /** Distinct course names in the visible week, from whichever source filled it. */
 private fun weekCourseCount(overview: top.sykesp42.rin.data.ApiScheduleOverview): Int =
     overview.days.flatMap { it.events }.map { it.courseName }.filter { it.isNotBlank() }.distinct().size
-
-/** Week / day / month switch shared by the three timetable surfaces. */
-private enum class ScheduleViewMode { WEEK, DAY, MONTH }
-
-@Composable
-private fun ViewModeTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    val colors = LocalRinColors.current
-    TextButton(
-        onClick = onClick,
-        modifier = Modifier.heightIn(min = 40.dp),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-    ) {
-        Text(
-            text = label,
-            color = if (selected) colors.text else colors.textSecondary,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-private fun EmptySchedule(onAdd: () -> Unit) {
-    val colors = LocalRinColors.current
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(
-            text = "课表还是空的",
-            color = colors.text,
-            style = MaterialTheme.typography.titleMedium
-        )
-        Text(
-            text = "手动添加课程后，今日、提醒和学期报告都会跟着更新。",
-            color = colors.textSecondary,
-            style = MaterialTheme.typography.bodySmall
-        )
-        SuiSecondaryButton(text = "添加第一门课", onClick = onAdd)
-    }
-}

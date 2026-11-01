@@ -88,6 +88,9 @@ fun ScheduleWeekView(
     onFullscreen: (() -> Unit)? = null,
     tableMode: Boolean = false,
     onToggleTableMode: (() -> Unit)? = null,
+    // When set, tapping 表 opens the whole-page table layer instead of the
+    // inline one; the inline strip is too short for a readable grid.
+    onOpenTable: (() -> Unit)? = null,
     currentWeek: Int = 0,
     onBackToCurrentWeek: (() -> Unit)? = null,
     shareOwner: String = "",
@@ -192,7 +195,8 @@ fun ScheduleWeekView(
                         if (tableMode) onToggleTableMode()
                     }
                     ModeTab("表", selected = tableMode) {
-                        if (!tableMode) onToggleTableMode()
+                        val opener = onOpenTable
+                        if (opener != null) opener() else if (!tableMode) onToggleTableMode?.invoke()
                     }
                 }
                 Spacer(Modifier.weight(1f))

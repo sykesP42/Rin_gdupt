@@ -10,6 +10,10 @@ import top.sykesp42.rin.data.ApiScheduleOverview
  * Day headers count course entries, not class periods: one course can span two or
  * more sections, so "5 节课" would overstate or understate the day.
  */
+/** "回到本周" is only useful when the current week is known and another week is shown. */
+fun shouldShowReturnToCurrent(viewedWeek: Int, currentWeek: Int): Boolean =
+    currentWeek > 0 && viewedWeek != currentWeek
+
 fun courseCountLabel(count: Int): String =
     if (count > 0) "$count 门课" else "没有课"
 

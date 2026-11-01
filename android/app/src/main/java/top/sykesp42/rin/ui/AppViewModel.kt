@@ -62,7 +62,12 @@ data class ScheduleUiState(
     val loading: Boolean = true,
     val currentWeek: Int = 0,
     val termStart: String = "",
-    val warning: String? = null
+    val warning: String? = null,
+    // Cache footnote support, same as the full client: a stale read is still
+    // useful and must say when it was taken.
+    val fromCache: Boolean = false,
+    val cachedAt: String = "",
+    val error: String = ""
 )
 
 data class CourseMeeting(
