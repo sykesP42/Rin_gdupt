@@ -688,7 +688,7 @@ private fun DisplaySection(
         SectionHeader(title = "页面显示")
         PaperSwitchRow(
             title = "极简模式",
-            description = "只留「签到」和「我的」",
+            description = "只留「今日」和「我的」",
             checked = settings.minimalMode,
             onCheckedChange = onMinimalChange,
             contentDescription = "极简模式",
