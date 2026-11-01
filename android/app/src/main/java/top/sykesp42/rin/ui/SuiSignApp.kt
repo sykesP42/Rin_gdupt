@@ -129,7 +129,34 @@ fun SuiSignApp(vm: AppViewModel, settings: AppSettings?, initialTab: MainTab = M
     when (val currentAuth = auth) {
         is AuthState.LoggedIn ->
             MainScaffold(vm = vm, settings = settings, user = currentAuth.user, initialTab = initialTab)
-        else -> Unit
+        // LoggedOut used to render nothing — turning off 本地模式 without a
+        // cloud session blanked the whole app. Dead ends get a one-tap way back.
+        else -> Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing),
+            contentAlignment = Alignment.Center
+        ) {
+            RinBackdrop(Modifier.fillMaxSize())
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                BrandMark(size = 52.dp)
+                Text(
+                    "登录状态已失效",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+                Text(
+                    "回到本地模式即可继续使用",
+                    color = colors.textSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
+                )
+                top.sykesp42.rin.ui.components.SuiPrimaryButton(
+                    text = "回到本地模式",
+                    onClick = { vm.setLocalMode(true) }
+                )
+            }
+        }
     }
 }
 
